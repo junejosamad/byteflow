@@ -1,0 +1,254 @@
+VERSION 5.8 ;
+BUSBITCHARS "[]" ;
+DIVIDERCHAR "/" ;
+
+UNITS
+  DATABASE MICRONS 100 ;
+END UNITS
+
+LAYER Metal1
+  TYPE ROUTING ;
+  DIRECTION HORIZONTAL ;
+  WIDTH 0.1 ;
+END Metal1
+
+LAYER Metal2
+  TYPE ROUTING ;
+  DIRECTION VERTICAL ;
+  WIDTH 0.1 ;
+END Metal2
+
+LAYER Metal3
+  TYPE ROUTING ;
+  DIRECTION HORIZONTAL ;
+  WIDTH 0.1 ;
+END Metal3
+
+VIA M1_M2_VIA DEFAULT
+  LAYER Metal1 ;
+    RECT -0.05 -0.05 0.05 0.05 ;
+  LAYER Metal2 ;
+    RECT -0.05 -0.05 0.05 0.05 ;
+END M1_M2_VIA
+
+VIA M2_M3_VIA DEFAULT
+  LAYER Metal2 ;
+    RECT -0.05 -0.05 0.05 0.05 ;
+  LAYER Metal3 ;
+    RECT -0.05 -0.05 0.05 0.05 ;
+END M2_M3_VIA
+
+MACRO NAND2
+  CLASS CORE ;
+  SIZE 2 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN B
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END B
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END NAND2
+
+MACRO NOR2
+  CLASS CORE ;
+  SIZE 2 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN B
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END B
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END NOR2
+
+MACRO NOT
+  CLASS CORE ;
+  SIZE 1 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.85 0.45 0.95 0.55 ;
+    END
+  END Y
+END NOT
+
+MACRO AND2
+  CLASS CORE ;
+  SIZE 2 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN B
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END B
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END AND2
+
+MACRO OR2
+  CLASS CORE ;
+  SIZE 2 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN B
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END B
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END OR2
+
+MACRO XOR2
+  CLASS CORE ;
+  SIZE 3 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN B
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END B
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END XOR2
+
+MACRO BUF
+  CLASS CORE ;
+  SIZE 1 BY 1 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END BUF
+
+MACRO DFF
+  CLASS CORE ;
+  SIZE 4 BY 2 ;
+  PIN C
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END C
+  PIN D
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END D
+  PIN Q
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Q
+END DFF
+
+MACRO CLKBUF
+  CLASS CORE ;
+  SIZE 2 BY 2 ;
+  PIN A
+    DIRECTION INPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN Y
+    DIRECTION OUTPUT ;
+    PORT
+      LAYER Metal1 ;
+      RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END Y
+END CLKBUF
+
+END LIBRARY
