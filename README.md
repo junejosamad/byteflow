@@ -3,7 +3,7 @@
 
 OpenEDA is a custom, fully automated physical design flow built from scratch in C++. It takes behavioral Verilog RTL, synthesizes it, and executes a complete VLSI physical design flow to generate industry-standard DEF layouts and vector visualizations.
 
-![Final Routed 32-bit ALU](benchmarks/layout_routed.svg) *(Insert a screenshot of your 32-bit ALU routing here)*
+![Final Routed 32-bit ALU](benchmarks/layout_routed.svg) 
 
 ## 🧠 System Architecture
 
