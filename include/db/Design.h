@@ -122,7 +122,10 @@ public:
     std::vector<GateInstance*> instances;
     std::vector<Net*> nets;
     std::unordered_map<std::string, Net*> netMap;
-	std::map<std::string, Macro*> library; // Map of macro name to Macro definition
+    std::map<std::string, Macro*> library; // Map of macro name to Macro definition
+
+    double coreWidth = 0.0;
+    double coreHeight = 0.0;
 
     void addInstance(GateInstance* inst) {
         instances.push_back(inst);

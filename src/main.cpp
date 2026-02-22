@@ -8,6 +8,7 @@
 #include "analysis/StaEngine.h"
 #include "place/PlaceEngine.h"
 #include "place/Legalizer.h" // <--- Include this
+#include "gui/GuiEngine.h"
 #include "route/PdnGenerator.h" // <--- Include this
 #include "util/SvgExporter.h"
 #include "route/RouteEngine.h"
@@ -20,6 +21,8 @@
 #include "util/VerilogWriter.h" // <--- LEVEL 8
 #include "util/DefExporter.h" // <--- LEVEL 9
 #include "util/ScriptExporter.h" // <--- LEVEL 10
+#include "gui/GuiEngine.h"
+#include "export/GdsExporter.h"
 #include "timer/Timer.h"
 
 int main(int argc, char* argv[]) {
@@ -134,6 +137,8 @@ int main(int argc, char* argv[]) {
         // 3. INITIALIZE ENGINES
         // Auto-scale core area based on cell count
         double coreSize = std::max(400.0, std::sqrt((double)chip.instances.size()) * 30.0);
+        chip.coreWidth = coreSize;
+        chip.coreHeight = coreSize;
         std::cout << "\n[Config] Core area: " << coreSize << " x " << coreSize 
                   << " (" << chip.instances.size() << " cells)\n";
 
@@ -219,6 +224,10 @@ int main(int argc, char* argv[]) {
         std::string defName = filename.substr(0, filename.find_last_of(".")) + ".def";
         defExporter.writeDEF(defName, &chip, coreSize, coreSize);
 
+        // 13B. EXPORT GDSII (Silicon Tape-Out)
+        std::string gdsName = filename.substr(0, filename.find_last_of(".")) + "_layout.gds";
+        GdsExporter::exportGds(gdsName, &chip);
+
         // 14. EXPORT PYTHON SCRIPT (Crash-Proof)
         ScriptExporter scriptWriter;
         std::string pyName = filename.substr(0, filename.find_last_of(".")) + "_load.py";
@@ -238,6 +247,15 @@ int main(int argc, char* argv[]) {
         if (!chip.instances.empty()) {
             GateInstance* g1 = chip.instances[0];
             std::cout << "\nFinal loc of " << g1->name << ": (" << g1->x << ", " << g1->y << ")\n";
+        }
+
+        std::cout << "\n=== LAUNCHING BYTEFLOW VISUALIZER ===\n";
+        GuiEngine gui;
+        if (gui.init(1280, 720, "Byteflow Visualizer - 32-Bit ALU")) {
+            // Hand the fully routed design over to the GPU
+            gui.run(&chip, &router); 
+        } else {
+            std::cerr << "[Error] Failed to initialize hardware-accelerated GUI.\n";
         }
 
     }

@@ -87,8 +87,19 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
         std::cout << "  Iteration " << iter << "...\n";
         hasConflicts = false;
         
-        // Present usage map for this iteration
+        // Present usage map for this iteration. 
+        // We initialize it with the footprints of all nets from the PREVIOUS iteration to enable clean-net skipping!
         std::vector<int> usage(totalNodes, 0);
+        if (iter > 1) {
+            for (Net* net : design.nets) {
+                if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
+                for (const auto& p : net->routePath) {
+                    int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
+                    int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
+                    usage[getIdx(px, py, p.layer, gridH, gridL)]++;
+                }
+            }
+        }
         
         int netCount = 0;
         int totalNets = 0;
@@ -101,6 +112,8 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             // PRE-ALLOCATE A* arrays ONCE PER THREAD !
             std::vector<double> minCost(totalNodes);
             std::vector<Node> parent(totalNodes);
+            std::vector<int> searchId(totalNodes, 0);
+            int current_search_id = 0;
 
             #pragma omp for schedule(dynamic)
             for (int netIdx = 0; netIdx < (int)design.nets.size(); ++netIdx) {
@@ -108,6 +121,19 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
 
                 // Skip power lines, they are handled geometrically by PDN generator
                 if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
+
+                // --- 2. ACTIVE RIP-UP & REROUTE (No Skipping!) ---
+                if (iter > 1 && net->routePath.size() > 0) {
+                    // Always rip it up by completely removing its old footprint from usage
+                    #pragma omp critical(usage_map_update)
+                    {
+                        for (const auto& p : net->routePath) {
+                            int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
+                            int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
+                            usage[getIdx(px, py, p.layer, gridH, gridL)]--;
+                        }
+                    }
+                }
                 
                 int currentNetCount;
                 #pragma omp critical(net_count_update)
@@ -139,6 +165,111 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     }
                 }
 
+                auto isSegmentClear = [&](int x1, int y1, int x2, int y2, int layer) -> bool {
+                    int dx = (x2 > x1) ? 1 : ((x2 < x1) ? -1 : 0);
+                    int dy = (y2 > y1) ? 1 : ((y2 < y1) ? -1 : 0);
+                    int cx = x1, cy = y1;
+                    while (true) {
+                        int idx = getIdx(cx, cy, layer, gridH, gridL);
+                        if (usage[idx] > 0 || obstacles[idx] > 0) return false;
+                        if (cx == x2 && cy == y2) break;
+                        cx += dx; cy += dy;
+                    }
+                    return true;
+                };
+
+                bool patternRouted = false;
+                if (net->connectedPins.size() == 2) {
+                    Pin* pA = net->connectedPins[0];
+                    Pin* pB = net->connectedPins[1];
+                    int ax = std::max(1, std::min(gridW-2, (int)(pA->getAbsX() / scaleX)));
+                    int ay = std::max(1, std::min(gridH-2, (int)(pA->getAbsY() / scaleY)));
+                    int bx = std::max(1, std::min(gridW-2, (int)(pB->getAbsX() / scaleX)));
+                    int by = std::max(1, std::min(gridH-2, (int)(pB->getAbsY() / scaleY)));
+
+                    // Calculate precise step directions (allowing 0 if coordinates match)
+                    int stepX = (bx > ax) ? 1 : ((bx < ax) ? -1 : 0);
+                    int stepY = (by > ay) ? 1 : ((by < ay) ? -1 : 0);
+                    
+                    // Attempt 1: Go Horizontal on Layer 1, then Vertical on Layer 2
+                    if (isSegmentClear(ax, ay, bx, ay, 1) && isSegmentClear(bx, ay, bx, by, 2)) {
+                        net->routePath.clear();
+                        
+                        // Walk X
+                        if (stepX != 0) {
+                            for (int x = ax; x != bx + stepX; x += stepX) { Point pt; pt.x = x * scaleX; pt.y = ay * scaleY; pt.layer = 1; net->routePath.push_back(pt); }
+                        } else {
+                            Point pt; pt.x = ax * scaleX; pt.y = ay * scaleY; pt.layer = 1; net->routePath.push_back(pt); // No movement needed
+                        }
+                        
+                        // The Layer Transition VIA
+                        Point ptVia1; ptVia1.x = bx * scaleX; ptVia1.y = ay * scaleY; ptVia1.layer = 2; // Z-axis VIA Transition
+                        net->routePath.push_back(ptVia1);
+                        
+                        // Walk Y
+                        if (stepY != 0) {
+                            for (int y = ay + stepY; y != by + stepY; y += stepY) { Point pt; pt.x = bx * scaleX; pt.y = y * scaleY; pt.layer = 2; net->routePath.push_back(pt); }
+                        } else {
+                            Point pt; pt.x = bx * scaleX; pt.y = by * scaleY; pt.layer = 2; net->routePath.push_back(pt);
+                        }
+                        
+                        patternRouted = true;
+                    } 
+                    // Attempt 2: Go Vertical on Layer 2, then Horizontal on Layer 1
+                    else if (isSegmentClear(ax, ay, ax, by, 2) && isSegmentClear(ax, by, bx, by, 1)) {
+                        net->routePath.clear();
+                        
+                        // Walk Y
+                        if (stepY != 0) {
+                            for (int y = ay; y != by + stepY; y += stepY) { Point pt; pt.x = ax * scaleX; pt.y = y * scaleY; pt.layer = 2; net->routePath.push_back(pt); }
+                        } else {
+                            Point pt; pt.x = ax * scaleX; pt.y = ay * scaleY; pt.layer = 2; net->routePath.push_back(pt); 
+                        }
+                        
+                        // The Layer Transition VIA
+                        Point ptVia2; ptVia2.x = ax * scaleX; ptVia2.y = by * scaleY; ptVia2.layer = 1; // Z-axis VIA Transition
+                        net->routePath.push_back(ptVia2);
+                        
+                        // Walk X
+                        if (stepX != 0) {
+                            for (int x = ax + stepX; x != bx + stepX; x += stepX) { Point pt; pt.x = x * scaleX; pt.y = by * scaleY; pt.layer = 1; net->routePath.push_back(pt); }
+                        } else {
+                            Point pt; pt.x = bx * scaleX; pt.y = by * scaleY; pt.layer = 1; net->routePath.push_back(pt); 
+                        }
+                        patternRouted = true;
+                    }
+                    
+                    if (patternRouted && net->routePath.size() > 1) {
+                        std::vector<Point> finalPath;
+                        for (size_t i = 0; i < net->routePath.size() - 1; ++i) {
+                            finalPath.push_back(net->routePath[i]);
+                            finalPath.push_back(net->routePath[i+1]);
+                        }
+                        net->routePath = finalPath;
+                    }
+                }
+
+                if (patternRouted) {
+                    #pragma omp critical(usage_map_update)
+                    {
+                        std::set<Point3D> localUsed;
+                        for (auto& p : net->routePath) {
+                            int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
+                            int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
+                            localUsed.insert({px, py, p.layer});
+                        }
+                        for (auto& p : localUsed) {
+                            usage[getIdx(p.x, p.y, p.l, gridH, gridL)]++;
+                        }
+                        for (Pin* p : net->connectedPins) {
+                            int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
+                            int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
+                            usage[getIdx(px, py, 1, gridH, gridL)] += 50; 
+                        }
+                    }
+                    continue; 
+                }
+
                 int sx = std::max(0, std::min(gridW-1, (int)(startPin->getAbsX() / scaleX)));
             int sy = std::max(0, std::min(gridH-1, (int)(startPin->getAbsY() / scaleY)));
             int sl = 1; // All pins start physically on Layer 1
@@ -152,14 +283,15 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 int ey = std::max(0, std::min(gridH-1, (int)(endPin->getAbsY() / scaleY)));
                 int el = 1; // Destination is on Layer 1
 
-                // RESET pre-allocated arrays (fast memset, no alloc/dealloc)
-                std::fill(minCost.begin(), minCost.end(), 1e9);
+                // GENERATIONAL ARRAY: Increment ID instead of O(N) memory clear
+                current_search_id++;
                 // parent doesn't need full reset - only accessed for found paths
 
                 std::priority_queue<Node, std::vector<Node>, std::greater<Node>> pq;
                 
                 int startIdx = getIdx(sx, sy, sl, gridH, gridL);
                 pq.push({sx, sy, sl, 0.0, 0.0, -1, -1, -1});
+                searchId[startIdx] = current_search_id;
                 minCost[startIdx] = 0.0;
                 
                 // THE CRITICAL FIX: Initialize the parent of the start node so it doesn't loop infinitely
@@ -168,12 +300,23 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 bool found = false;
                 int fx = -1, fy = -1, fl = -1;
 
-                // Bounding box for A*: restrict search to region around src/dst
-                int pad = std::max(100, (std::abs(ex - sx) + std::abs(ey - sy)) / 2);
-                int bbMinX = std::max(0, std::min(sx, ex) - pad);
-                int bbMaxX = std::min(gridW - 1, std::max(sx, ex) + pad);
-                int bbMinY = std::max(0, std::min(sy, ey) - pad);
-                int bbMaxY = std::min(gridH - 1, std::max(sy, ey) + pad);
+                // --- 3. DYNAMIC BOUNDING BOX ---
+                int bbMinX = gridW, bbMaxX = 0, bbMinY = gridH, bbMaxY = 0;
+                for (Pin* p : net->connectedPins) {
+                    if (!p || !p->inst) continue;
+                    int px = (int)(p->getAbsX() / scaleX);
+                    int py = (int)(p->getAbsY() / scaleY);
+                    bbMinX = std::min(bbMinX, px);
+                    bbMaxX = std::max(bbMaxX, px);
+                    bbMinY = std::min(bbMinY, py);
+                    bbMaxY = std::max(bbMaxY, py);
+                }
+                
+                int margin = 50 + (iter * 20); 
+                bbMinX = std::max(1, bbMinX - margin);
+                bbMaxX = std::min(gridW - 2, bbMaxX + margin);
+                bbMinY = std::max(1, bbMinY - margin);
+                bbMaxY = std::min(gridH - 2, bbMaxY + margin);
 
                 // 3D Movement: Left, Right, Down, Up, Layer Down, Layer Up
                 int dx[] = {-1, 1, 0, 0, 0, 0};
@@ -237,12 +380,20 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                             
                             double newCost = curr.gCost + (stepCost * history[nIdx]) + congCost;
                             
+                            // Lazy initialization of minCost
+                            if (searchId[nIdx] != current_search_id) {
+                                searchId[nIdx] = current_search_id;
+                                minCost[nIdx] = 1e9;
+                            }
+                            
                             if (newCost < minCost[nIdx]) {
                                 minCost[nIdx] = newCost;
                                 // 3D Manhattan Heuristic
                                 double h = std::abs(ex - nx) + std::abs(ey - ny) + std::abs(el - nl)*10.0;
-                                parent[nIdx] = curr; // User snippet optimization here uses `curr` as parent instead of creating it manually!
-                                pq.push({nx, ny, nl, newCost, newCost + h, curr.x, curr.y, curr.l});
+                                parent[nIdx] = curr; 
+                                
+                                // --- 1. WEIGHTED A* SPEED HACK ---
+                                pq.push({nx, ny, nl, newCost, newCost + (h * 1.5), curr.x, curr.y, curr.l});
                             }
                         }
                     }
@@ -273,6 +424,12 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     sx = ex; sy = ey; sl = el; // Start next segment from here
                 }
             }
+            
+            // Strip out any accidental duplicate nodes before committing the path
+            auto last = std::unique(net->routePath.begin(), net->routePath.end(), [](const Point& a, const Point& b) {
+                return a.x == b.x && a.y == b.y && a.layer == b.layer;
+            });
+            net->routePath.erase(last, net->routePath.end());
             
             // --- 3. RELOCK PINS & UPDATE USAGE (Critical Section) ---
             #pragma omp critical(usage_map_update)
