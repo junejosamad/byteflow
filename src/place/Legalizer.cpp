@@ -17,7 +17,7 @@ void Legalizer::run() {
         Row r;
         r.y = i * rowHeight;
         r.height = rowHeight;
-        r.nextFreeX = 0.0; // Start filling from the left edge
+        r.nextFreeX = 2.0; // Start filling from the left edge (+ margin)
         rows.push_back(r);
     }
     std::cout << "  Initialized " << numRows << " rows.\n";
@@ -51,6 +51,17 @@ void Legalizer::run() {
         // Snap to manufacturing grid (siteWidth)
         newX = std::round(newX / siteWidth) * siteWidth;
         
+        // --- CORE MARGIN ENFORCEMENT ---
+        // Prevent cells from being placed flush against the boundary power rings
+        double margin = 2.0; 
+        
+        if (newX < margin) {
+            newX = margin; // Push away from the left VSS/VDD wall
+        }
+        if (newX + inst->type->width > coreWidth - margin) {
+            newX = coreWidth - inst->type->width - margin; // Push away from the right wall
+        }
+
         inst->x = newX;
 
         // D. Update Row's Free Space

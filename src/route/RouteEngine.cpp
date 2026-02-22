@@ -1,4 +1,5 @@
 #include "route/RouteEngine.h"
+#include <omp.h>
 #include <iostream>
 #include <vector>
 #include <queue>
@@ -89,33 +90,56 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
         // Present usage map for this iteration
         std::vector<int> usage(totalNodes, 0);
         
-        // PRE-ALLOCATE A* arrays ONCE (not per-search!) — saves thousands of 1M-element allocations
-        std::vector<double> minCost(totalNodes);
-        std::vector<Node> parent(totalNodes);
-        
         int netCount = 0;
         int totalNets = 0;
         for (Net* n : design.nets) {
             if (n->name != "VDD" && n->name != "VSS" && n->connectedPins.size() >= 2) totalNets++;
         }
 
-        // Removed inner loop pre-calculation
-        for (Net* net : design.nets) {
-            // Skip power lines, they are handled geometrically by PDN generator
-            if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
-            
-            netCount++;
-            if (netCount % 100 == 0) {
-                std::cout << "    Routing net " << netCount << "/" << totalNets << "...\n";
-            }
-            
-            net->routePath.clear();
-            std::set<Point3D> netUsedNodes; // Prevent a multi-pin net from penalizing itself
-            
-            Pin* startPin = net->connectedPins[0];
-            if (!startPin || !startPin->inst) continue;
+        #pragma omp parallel
+        {
+            // PRE-ALLOCATE A* arrays ONCE PER THREAD !
+            std::vector<double> minCost(totalNodes);
+            std::vector<Node> parent(totalNodes);
 
-            int sx = std::max(0, std::min(gridW-1, (int)(startPin->getAbsX() / scaleX)));
+            #pragma omp for schedule(dynamic)
+            for (int netIdx = 0; netIdx < (int)design.nets.size(); ++netIdx) {
+                Net* net = design.nets[netIdx];
+
+                // Skip power lines, they are handled geometrically by PDN generator
+                if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
+                
+                int currentNetCount;
+                #pragma omp critical(net_count_update)
+                {
+                    currentNetCount = ++netCount;
+                }
+                
+                if (currentNetCount % 100 == 0) {
+                    #pragma omp critical(print_lock)
+                    {
+                        std::cout << "    Routing net " << currentNetCount << "/" << totalNets << "...\n";
+                    }
+                }
+                
+                net->routePath.clear();
+                std::set<Point3D> netUsedNodes; // Prevent a multi-pin net from penalizing itself
+                
+                Pin* startPin = net->connectedPins[0];
+                if (!startPin || !startPin->inst) continue;
+
+                // --- 1. UNLOCK OWN PINS (Critical Section) ---
+                // Only one thread can modify the global usage map at a time
+                #pragma omp critical(usage_map_update)
+                {
+                    for (Pin* p : net->connectedPins) {
+                        int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
+                        int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
+                        usage[getIdx(px, py, 1, gridH, gridL)] -= 50; 
+                    }
+                }
+
+                int sx = std::max(0, std::min(gridW-1, (int)(startPin->getAbsX() / scaleX)));
             int sy = std::max(0, std::min(gridH-1, (int)(startPin->getAbsY() / scaleY)));
             int sl = 1; // All pins start physically on Layer 1
             
@@ -174,8 +198,10 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                         int ny = curr.y + dy[d];
                         int nl = curr.l + dl[d];
 
-                        // Stay within bounding box AND valid layers
-                        if (nx >= bbMinX && nx <= bbMaxX && ny >= bbMinY && ny <= bbMaxY && nl >= 1 && nl < gridL) {
+                        // Stay within bounding box AND valid layers, with a 1-unit boundary Keep-Out Margin
+                        if (nx >= bbMinX && nx <= bbMaxX && ny >= bbMinY && ny <= bbMaxY && 
+                            nx >= 1 && nx < gridW - 1 && ny >= 1 && ny < gridH - 1 && 
+                            nl >= 1 && nl < gridL) {
                             int nIdx = getIdx(nx, ny, nl, gridH, gridL);
                             double stepCost = 1.0; 
                             
@@ -248,11 +274,23 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 }
             }
             
-            // Register this net's footprint into the global usage map for the next net to see
-            for (auto const& pt : netUsedNodes) {
-                usage[getIdx(pt.x, pt.y, pt.l, gridH, gridL)]++;
+            // --- 3. RELOCK PINS & UPDATE USAGE (Critical Section) ---
+            #pragma omp critical(usage_map_update)
+            {
+                // Lock pins back up
+                for (Pin* p : net->connectedPins) {
+                    int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
+                    int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
+                    usage[getIdx(px, py, 1, gridH, gridL)] += 50; 
+                }
+                
+                // Add the new routed path to the global usage map
+                for (auto const& pt : netUsedNodes) {
+                    usage[getIdx(pt.x, pt.y, pt.l, gridH, gridL)]++;
+                }
             }
-        }
+            } // end pragma omp for
+        } // end pragma omp parallel
         
         // Post-Iteration: Check for conflicts and update history map
         int conflicts = 0;
@@ -365,7 +403,8 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     for (int d = 0; d < 8 && !resolved; ++d) {
                         int nx = p.x + dx[d] * dist;
                         int ny = p.y + dy[d] * dist;
-                        if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
+                        // 1-unit Keep-Out Margin for jog insertion
+                        if (nx >= 1 && nx < gridW - 1 && ny >= 1 && ny < gridH - 1) {
                             auto newKey = std::make_tuple(nx, ny, p.layer);
                             if (occupancy.count(newKey) == 0) {
                                 // Dynamic occupancy update: free old spot, claim new
