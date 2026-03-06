@@ -1,4 +1,22 @@
-build/
+﻿build/
 .vscode/
 *.exe
 *.log
+
+# Build/test output logs
+*.log
+*.txt
+!CMakeLists.txt
+!requirements.txt
+
+# Generated binaries
+output.gds
+*.pyd
+route_debug.log
+
+# IDE / GUI state
+imgui.ini
+
+# Loose SVGs and test files
+*.svg
+test_minimal.v

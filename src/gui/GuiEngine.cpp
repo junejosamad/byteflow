@@ -7,6 +7,7 @@
 #include <algorithm>
 #include "db/Design.h"
 #include "route/RouteEngine.h"
+#include "cts/CtsEngine.h"
 
 GuiEngine::GuiEngine() : window(nullptr) {}
 
@@ -39,7 +40,7 @@ bool GuiEngine::init(int width, int height, const std::string& title) {
     return true;
 }
 
-void GuiEngine::run(Design* design, RouteEngine* routeEngine) {
+void GuiEngine::run(Design* design, RouteEngine* routeEngine, CtsEngine* ctsEngine) {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -49,7 +50,7 @@ void GuiEngine::run(Design* design, RouteEngine* routeEngine) {
         ImGui::NewFrame();
 
         // Render our custom EDA Canvas
-        renderCanvas(design, routeEngine);
+        renderCanvas(design, routeEngine, ctsEngine);
 
         // Rendering
         ImGui::Render();
@@ -64,7 +65,7 @@ void GuiEngine::run(Design* design, RouteEngine* routeEngine) {
     }
 }
 
-void GuiEngine::renderCanvas(Design* design, RouteEngine* routeEngine) {
+void GuiEngine::renderCanvas(Design* design, RouteEngine* routeEngine, CtsEngine* ctsEngine) {
     // Remove padding so the canvas fills the entire window seamlessly
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -160,6 +161,14 @@ void GuiEngine::renderCanvas(Design* design, RouteEngine* routeEngine) {
             dx = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
             dy = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
 
+            // FIX: Disconnected PDN segments (VSS/VDD macro grids)
+            // If the "segment" is jumping diagonally across the chip, it's NOT a real wire!
+            // It's the GuiEngine traversing from the end of one stripe to the start of the next.
+            if ((dx != 0 && dy != 0) && (net->name == "VDD" || net->name == "VSS")) {
+                i++; // Skip rendering this jump, just move to the next valid start point
+                continue;
+            }
+
             // Look-ahead loop: Keep extending 'j' as long as the line is perfectly straight
             while (j < net->routePath.size() - 1) {
                 auto& next_pt = net->routePath[j+1];
@@ -216,6 +225,11 @@ void GuiEngine::renderCanvas(Design* design, RouteEngine* routeEngine) {
         }
     }
 
+    // --- 7. Draw the Clock Tree (If it exists) ---
+    if (ctsEngine && ctsEngine->getClockTreeRoot()) {
+        renderCtsTree(ctsEngine->getClockTreeRoot(), draw_list, canvas_p0, design->coreHeight, zoom);
+    }
+
     ImGui::End();
     ImGui::PopStyleVar(); // Pop the window padding
 }
@@ -228,5 +242,39 @@ void GuiEngine::shutdown() {
         glfwDestroyWindow(window);
         glfwTerminate();
         window = nullptr;
+    }
+}
+
+void GuiEngine::renderCtsTree(std::shared_ptr<CtsNode> node, ImDrawList* draw_list, ImVec2 canvas_p0, float canvas_h, float zoom) {
+    if (!node) return;
+
+    // Standard CAD Y-Inversion (Match your existing toScreen logic)
+    auto toScreen = [&](float lx, float ly) -> ImVec2 {
+        float sx = canvas_p0.x + panX + (lx * zoom);
+        float sy = canvas_p0.y + panY + ((canvas_h - ly) * zoom);
+        return ImVec2(sx, sy);
+    };
+
+    ImVec2 p1 = toScreen(node->x, node->y);
+    float nodeSize = std::max(3.0f, 2.0f * zoom);
+
+    // Draw the Branch Point (Yellow Circle) or Sink (Cyan Circle)
+    if (node->isLeaf) {
+        draw_list->AddCircleFilled(p1, nodeSize, IM_COL32(0, 255, 255, 255)); // Cyan Leaf
+    } else {
+        draw_list->AddCircleFilled(p1, nodeSize, IM_COL32(255, 255, 0, 255)); // Yellow Branch
+    }
+
+    // Recursively draw lines to children
+    float lineThickness = std::max(1.0f, 1.0f * zoom);
+    if (node->left) {
+        ImVec2 p2 = toScreen(node->left->x, node->left->y);
+        draw_list->AddLine(p1, p2, IM_COL32(255, 0, 255, 200), lineThickness); // Magenta Line
+        renderCtsTree(node->left, draw_list, canvas_p0, canvas_h, zoom);
+    }
+    if (node->right) {
+        ImVec2 p2 = toScreen(node->right->x, node->right->y);
+        draw_list->AddLine(p1, p2, IM_COL32(255, 0, 255, 200), lineThickness); // Magenta Line
+        renderCtsTree(node->right, draw_list, canvas_p0, canvas_h, zoom);
     }
 }

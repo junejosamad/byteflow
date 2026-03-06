@@ -123,6 +123,7 @@ public:
     std::vector<Net*> nets;
     std::unordered_map<std::string, Net*> netMap;
     std::map<std::string, Macro*> library; // Map of macro name to Macro definition
+    Library* cellLibrary = nullptr; // Reference to the loaded std cell definitions
 
     double coreWidth = 0.0;
     double coreHeight = 0.0;

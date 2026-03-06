@@ -1,7 +1,15 @@
 #include "GdsExporter.h"
 #include "db/Design.h"
+#include "db/Library.h"
 #include <iostream>
 #include <cmath>
+#include <cstring>
+#include <set>
+#include <algorithm>
+
+// ========================================================================
+//  BIG-ENDIAN BYTE SWAPPERS (x86 is Little-Endian, GDSII is Big-Endian)
+// ========================================================================
 
 uint16_t GdsExporter::swap16(uint16_t val) {
     return (val << 8) | (val >> 8);
@@ -9,16 +17,15 @@ uint16_t GdsExporter::swap16(uint16_t val) {
 
 uint32_t GdsExporter::swap32(uint32_t val) {
     return ((val << 24) & 0xFF000000) |
-           ((val << 8) & 0x00FF0000) |
-           ((val >> 8) & 0x0000FF00) |
+           ((val <<  8) & 0x00FF0000) |
+           ((val >>  8) & 0x0000FF00) |
            ((val >> 24) & 0x000000FF);
 }
 
-// GDSII requires 8-byte IBM System/360 floating-point format
+// GDSII requires 8-byte IBM System/360 Hexadecimal floating-point format
 uint64_t GdsExporter::real8ToGDS(double value) {
     if (value == 0.0) return 0;
     
-    // IEEE 754 to IBM Hexadecimal conversion
     uint64_t bits;
     std::memcpy(&bits, &value, sizeof(bits));
     
@@ -27,24 +34,28 @@ uint64_t GdsExporter::real8ToGDS(double value) {
     uint64_t mantissa = (bits & 0xFFFFFFFFFFFFF) | 0x10000000000000; // Add hidden 1
     
     // Convert base-2 exponent to base-16
-    exp += 4; // adjust 16-bit boundaries
+    exp += 4;
     int exp16 = (exp + 256) / 4; // Bias IBM Exponent by 64 (x4 = 256)
-    int shift = (exp16 * 4) - exp - 4; // Shift amount to align hex boundary
+    int shift = (exp16 * 4) - exp - 4;
     
     mantissa >>= shift;
     
     uint64_t result = ((uint64_t)sign << 63) | ((uint64_t)(exp16 & 0x7F) << 56) | (mantissa >> 4);
     
-    // Swap 64 bit endianness
+    // Swap 64-bit endianness
     return ((result & 0xFF00000000000000ULL) >> 56) | 
            ((result & 0x00FF000000000000ULL) >> 40) | 
            ((result & 0x0000FF0000000000ULL) >> 24) | 
-           ((result & 0x000000FF00000000ULL) >> 8) | 
-           ((result & 0x00000000FF000000ULL) << 8) | 
+           ((result & 0x000000FF00000000ULL) >>  8) | 
+           ((result & 0x00000000FF000000ULL) <<  8) | 
            ((result & 0x0000000000FF0000ULL) << 24) | 
            ((result & 0x000000000000FF00ULL) << 40) | 
            ((result & 0x00000000000000FFULL) << 56);
 }
+
+// ========================================================================
+//  LOW-LEVEL BINARY RECORD WRITERS
+// ========================================================================
 
 void GdsExporter::writeRecordHeader(std::ofstream& out, uint16_t size, uint16_t recordType) {
     uint16_t swappedSize = swap16(size);
@@ -55,13 +66,13 @@ void GdsExporter::writeRecordHeader(std::ofstream& out, uint16_t size, uint16_t 
 
 void GdsExporter::writeI2(std::ofstream& out, uint16_t recordType, int16_t val) {
     writeRecordHeader(out, 6, recordType);
-    uint16_t swappedVal = swap16(val);
+    uint16_t swappedVal = swap16((uint16_t)val);
     out.write(reinterpret_cast<const char*>(&swappedVal), 2);
 }
 
 void GdsExporter::writeI4(std::ofstream& out, uint16_t recordType, int32_t val) {
     writeRecordHeader(out, 8, recordType);
-    uint32_t swappedVal = swap32(val);
+    uint32_t swappedVal = swap32((uint32_t)val);
     out.write(reinterpret_cast<const char*>(&swappedVal), 4);
 }
 
@@ -72,33 +83,96 @@ void GdsExporter::writeReal8(std::ofstream& out, uint16_t recordType, double val
 }
 
 void GdsExporter::writeString(std::ofstream& out, uint16_t recordType, const std::string& str) {
-    // Strings in GDSII must be even length
     std::string s = str;
-    if (s.length() % 2 != 0) s += '\0';
-    
-    writeRecordHeader(out, 4 + s.length(), recordType);
+    if (s.length() % 2 != 0) s += '\0'; // GDSII strings must be even length
+    writeRecordHeader(out, (uint16_t)(4 + s.length()), recordType);
     out.write(s.c_str(), s.length());
 }
 
-void GdsExporter::writePolygon(std::ofstream& out, int layer, const std::vector<std::pair<int, int>>& points) {
-    writeRecordHeader(out, 4, BOUNDARY);
-    writeI2(out, LAYER, layer);
-    writeI2(out, DATATYPE, 0); // Datatype 0
+void GdsExporter::writeNoData(std::ofstream& out, uint16_t recordType) {
+    writeRecordHeader(out, 4, recordType);
+}
+
+// ========================================================================
+//  GEOMETRY WRITERS
+// ========================================================================
+
+void GdsExporter::writePolygon(std::ofstream& out, int layer, const std::vector<std::pair<int32_t, int32_t>>& points) {
+    writeNoData(out, BOUNDARY);
+    writeI2(out, LAYER, (int16_t)layer);
+    writeI2(out, DATATYPE, 0);
     
-    // Write XY Coordinates
-    // Record size = length of header (4) + (num_points * 8 bytes for 2 I4s)
-    uint16_t xySize = 4 + (points.size() * 8);
+    // XY record: header(4) + (num_points * 8 bytes for two I4s)
+    uint16_t xySize = (uint16_t)(4 + (points.size() * 8));
     writeRecordHeader(out, xySize, XY);
     
     for (const auto& pt : points) {
-        uint32_t x = swap32(pt.first);
-        uint32_t y = swap32(pt.second);
+        uint32_t x = swap32((uint32_t)pt.first);
+        uint32_t y = swap32((uint32_t)pt.second);
         out.write(reinterpret_cast<const char*>(&x), 4);
         out.write(reinterpret_cast<const char*>(&y), 4);
     }
     
-    writeRecordHeader(out, 4, ENDEL);
+    writeNoData(out, ENDEL);
 }
+
+void GdsExporter::writeWireRect(std::ofstream& out, int layer, int32_t x1, int32_t y1, int32_t x2, int32_t y2, int half_width) {
+    int32_t minX = std::min(x1, x2) - half_width;
+    int32_t maxX = std::max(x1, x2) + half_width;
+    int32_t minY = std::min(y1, y2) - half_width;
+    int32_t maxY = std::max(y1, y2) + half_width;
+
+    std::vector<std::pair<int32_t, int32_t>> boundary = {
+        {minX, minY},
+        {maxX, minY},
+        {maxX, maxY},
+        {minX, maxY},
+        {minX, minY} // GDSII Boundaries must close the loop!
+    };
+    
+    writePolygon(out, layer, boundary);
+}
+
+void GdsExporter::writeSRef(std::ofstream& out, const std::string& structName, int32_t x, int32_t y) {
+    writeNoData(out, SREF);
+    writeString(out, SNAME, structName);
+    
+    // XY record: header(4) + 1 point (8 bytes)
+    writeRecordHeader(out, 12, XY);
+    uint32_t sx = swap32((uint32_t)x);
+    uint32_t sy = swap32((uint32_t)y);
+    out.write(reinterpret_cast<const char*>(&sx), 4);
+    out.write(reinterpret_cast<const char*>(&sy), 4);
+    
+    writeNoData(out, ENDEL);
+}
+
+// ========================================================================
+//  LAYER TRANSLATION
+// ========================================================================
+
+int GdsExporter::mapLayerToGds(int routerLayer) {
+    switch (routerLayer) {
+        case 1: return GDS_M1;
+        case 2: return GDS_M2;
+        case 3: return GDS_M3;
+        case 4: return GDS_M4;
+        default: return GDS_M1;
+    }
+}
+
+int GdsExporter::mapViaToGds(int fromLayer, int toLayer) {
+    int lo = std::min(fromLayer, toLayer);
+    int hi = std::max(fromLayer, toLayer);
+    if (lo == 1 && hi == 2) return GDS_VIA12;
+    if (lo == 2 && hi == 3) return GDS_VIA23;
+    if (lo == 3 && hi == 4) return GDS_VIA34;
+    return GDS_VIA12; // fallback
+}
+
+// ========================================================================
+//  MAIN EXPORT FUNCTION — Hierarchical GDSII Generation
+// ========================================================================
 
 bool GdsExporter::exportGds(const std::string& filename, Design* design) {
     std::ofstream out(filename, std::ios::binary);
@@ -110,10 +184,19 @@ bool GdsExporter::exportGds(const std::string& filename, Design* design) {
     std::cout << "=== EXPORTING GDSII ===" << std::endl;
     std::cout << "  Generating byte-swapped big-endian binary..." << std::endl;
 
-    // 1. Initial Headers
+    // Scaling factor: our design coords are in grid units, 
+    // we scale them to nanometers for the GDSII database units
+    const int SCALE = 100; // 1 grid unit = 100 nm = 0.1 um
+    const int HALF_WIDTH = 10 * SCALE; // Wire half-width in DB units
+    const int VIA_SIZE = 8 * SCALE;    // Via square half-width
+    const int PIN_SIZE = 5 * SCALE;    // Pin rectangle half-width
+
+    // ============================
+    // 1. GDSII LIBRARY HEADER
+    // ============================
     writeI2(out, HEADER, 600); // GDSII version 6.0
     
-    // BGNLIB (Contains 28 bytes of date/time, we just use 0 padding for simplicity)
+    // BGNLIB (28 bytes of date/time padding)
     writeRecordHeader(out, 28, BGNLIB);
     for (int i = 0; i < 12; ++i) { uint16_t pad = 0; out.write(reinterpret_cast<const char*>(&pad), 2); }
     
@@ -121,87 +204,152 @@ bool GdsExporter::exportGds(const std::string& filename, Design* design) {
     
     // Units: 1 database unit = 1 nm = 0.001 um = 1e-9 m
     writeRecordHeader(out, 20, UNITS);
-    uint64_t userUnits = real8ToGDS(0.001); // User unit to meters
-    uint64_t dbUnits = real8ToGDS(1e-9);    // Database unit to meters
+    uint64_t userUnits = real8ToGDS(0.001);
+    uint64_t dbUnits = real8ToGDS(1e-9);
     out.write(reinterpret_cast<const char*>(&userUnits), 8);
     out.write(reinterpret_cast<const char*>(&dbUnits), 8);
     
-    // 2. Start Structure (The Cell)
-    writeRecordHeader(out, 28, BGNSTR);
-    for (int i = 0; i < 12; ++i) { uint16_t pad = 0; out.write(reinterpret_cast<const char*>(&pad), 2); }
+    // ============================
+    // 2. CELL LIBRARY STRUCTURES
+    // ============================
+    // Each unique CellDef gets its own GDSII STRUCTURE with:
+    //   - Bounding box polygon on GDS_CELL layer
+    //   - Pin rectangles on GDS_PIN layer
     
-    writeString(out, STRNAME, "TOP"); // Name of the top cell
+    int cellStructCount = 0;
+    std::set<std::string> writtenCells;
     
-    // --- 3. EXPORT STANDARD CELLS ---
-    for (auto* inst : design->instances) {
-        // Expand gate into 2D Boundary for Layer 10 (Cell Bounding Box)
-        int x1 = inst->x;
-        int y1 = inst->y;
-        int x2 = inst->x + (inst->type->width * 1000); // Scale up to DB bounds roughly
-        int y2 = inst->y + (inst->type->height * 1000);
-        
-        std::vector<std::pair<int, int>> poly = {
-            {x1, y1}, {x1, y2}, {x2, y2}, {x2, y1}, {x1, y1} // Close polygon
-        };
-        writePolygon(out, 10, poly);
+    if (design->cellLibrary) {
+        for (auto& [cellName, cellDef] : design->cellLibrary->cells) {
+            if (!cellDef || writtenCells.count(cellName)) continue;
+            writtenCells.insert(cellName);
+            
+            // BGNSTR
+            writeRecordHeader(out, 28, BGNSTR);
+            for (int i = 0; i < 12; ++i) { uint16_t pad = 0; out.write(reinterpret_cast<const char*>(&pad), 2); }
+            writeString(out, STRNAME, cellName);
+            
+            // Cell bounding box (origin-relative, lower-left = 0,0)
+            int32_t cw = (int32_t)(cellDef->width * 1000 * SCALE);
+            int32_t ch = (int32_t)(cellDef->height * 1000 * SCALE);
+            
+            std::vector<std::pair<int32_t, int32_t>> bbox = {
+                {0, 0}, {cw, 0}, {cw, ch}, {0, ch}, {0, 0}
+            };
+            writePolygon(out, GDS_CELL, bbox);
+            
+            // Pin rectangles
+            for (const auto& pin : cellDef->pins) {
+                int32_t px = (int32_t)(pin.dx * 1000 * SCALE) + cw / 2; // offset from cell center
+                int32_t py = (int32_t)(pin.dy * 1000 * SCALE) + ch / 2;
+                
+                std::vector<std::pair<int32_t, int32_t>> pinRect = {
+                    {px - PIN_SIZE, py - PIN_SIZE},
+                    {px + PIN_SIZE, py - PIN_SIZE},
+                    {px + PIN_SIZE, py + PIN_SIZE},
+                    {px - PIN_SIZE, py + PIN_SIZE},
+                    {px - PIN_SIZE, py - PIN_SIZE}
+                };
+                writePolygon(out, GDS_PIN, pinRect);
+            }
+            
+            writeNoData(out, ENDSTR);
+            cellStructCount++;
+        }
     }
     
-    // --- 4. EXPORT ROUTING CENTERLINES TO RECTANGLES ---
-    int half_width = 10; // Wire width logic
+    std::cout << "  Wrote " << cellStructCount << " cell structure definitions." << std::endl;
+    
+    // ============================
+    // 3. TOP-LEVEL STRUCTURE
+    // ============================
+    writeRecordHeader(out, 28, BGNSTR);
+    for (int i = 0; i < 12; ++i) { uint16_t pad = 0; out.write(reinterpret_cast<const char*>(&pad), 2); }
+    writeString(out, STRNAME, "TOP");
+    
+    // --- 3A. SREF INSTANCES (Place each gate at its legalized coordinates) ---
+    int srefCount = 0;
+    for (auto* inst : design->instances) {
+        if (!inst || !inst->type) continue;
+        
+        int32_t ix = (int32_t)(inst->x * SCALE);
+        int32_t iy = (int32_t)(inst->y * SCALE);
+        
+        writeSRef(out, inst->type->name, ix, iy);
+        srefCount++;
+    }
+    
+    std::cout << "  Placed " << srefCount << " cell instances via SREF." << std::endl;
+    
+    // --- 3B. SIGNAL ROUTING (1D Centerlines → 2D Copper Rectangles) ---
+    int wireCount = 0;
+    int viaCount = 0;
+    int pdnSegCount = 0;
     
     for (auto* net : design->nets) {
         if (net->routePath.size() < 2) continue;
         
-        for (size_t i = 0; i < net->routePath.size() - 1; ++i) {
+        bool isPDN = (net->name == "VDD" || net->name == "VSS");
+        
+        for (size_t i = 0; i < net->routePath.size() - 1; i += 1) {
             auto& p1 = net->routePath[i];
-            auto& p2 = net->routePath[i+1];
+            auto& p2 = net->routePath[i + 1];
             
-            // Layer change = Via (Square polygon)
+            int32_t x1 = p1.x * SCALE;
+            int32_t y1 = p1.y * SCALE;
+            int32_t x2 = p2.x * SCALE;
+            int32_t y2 = p2.y * SCALE;
+            
+            // Layer change = Via (square polygon)
             if (p1.layer != p2.layer) {
-                int vx = p2.x;
-                int vy = p2.y;
-                int vl = 50; // VIA layer
+                int viaLayer = mapViaToGds(p1.layer, p2.layer);
                 
-                std::vector<std::pair<int, int>> poly = {
-                    {vx - half_width, vy - half_width},
-                    {vx - half_width, vy + half_width},
-                    {vx + half_width, vy + half_width},
-                    {vx + half_width, vy - half_width},
-                    {vx - half_width, vy - half_width}
+                std::vector<std::pair<int32_t, int32_t>> viaPoly = {
+                    {x2 - VIA_SIZE, y2 - VIA_SIZE},
+                    {x2 + VIA_SIZE, y2 - VIA_SIZE},
+                    {x2 + VIA_SIZE, y2 + VIA_SIZE},
+                    {x2 - VIA_SIZE, y2 + VIA_SIZE},
+                    {x2 - VIA_SIZE, y2 - VIA_SIZE}
                 };
-                writePolygon(out, vl, poly);
+                writePolygon(out, viaLayer, viaPoly);
+                viaCount++;
                 continue;
             }
             
-            // Wire logic
-            std::vector<std::pair<int, int>> poly;
-            if (p1.y == p2.y) { // Horizontal
-                int left = std::min(p1.x, p2.x);
-                int right = std::max(p1.x, p2.x);
-                poly.push_back({left, p1.y - half_width});
-                poly.push_back({left, p1.y + half_width});
-                poly.push_back({right, p1.y + half_width});
-                poly.push_back({right, p1.y - half_width});
-                poly.push_back({left, p1.y - half_width});
-            } else { // Vertical
-                int bot = std::min(p1.y, p2.y);
-                int top = std::max(p1.y, p2.y);
-                poly.push_back({p1.x - half_width, bot});
-                poly.push_back({p1.x - half_width, top});
-                poly.push_back({p1.x + half_width, top});
-                poly.push_back({p1.x + half_width, bot});
-                poly.push_back({p1.x - half_width, bot});
-            }
+            // Same layer = Wire rectangle
+            int gdsLayer = mapLayerToGds(p1.layer);
+            writeWireRect(out, gdsLayer, x1, y1, x2, y2, HALF_WIDTH);
             
-            writePolygon(out, p1.layer, poly);
+            if (isPDN) pdnSegCount++;
+            else wireCount++;
         }
     }
     
-    // 5. Cleanup
-    writeRecordHeader(out, 4, ENDSTR);
-    writeRecordHeader(out, 4, ENDLIB);
+    std::cout << "  Exported " << wireCount << " signal wire segments." << std::endl;
+    std::cout << "  Exported " << viaCount << " via cuts." << std::endl;
+    std::cout << "  Exported " << pdnSegCount << " PDN power grid segments." << std::endl;
+    
+    // --- 3C. CLOSE TOP STRUCTURE ---
+    writeNoData(out, ENDSTR);
+    
+    // ============================
+    // 4. CLOSE LIBRARY
+    // ============================
+    writeNoData(out, ENDLIB);
     
     out.close();
-    std::cout << "  Successfully wrote layout to " << filename << std::endl;
+    
+    // Calculate file size
+    std::ifstream checkFile(filename, std::ios::binary | std::ios::ate);
+    long fileSize = checkFile.tellg();
+    checkFile.close();
+    
+    std::cout << "  Successfully wrote " << filename << " (" << fileSize << " bytes)" << std::endl;
+    std::cout << "  Summary: " << cellStructCount << " cells, " 
+              << srefCount << " instances, "
+              << wireCount << " wires, " 
+              << viaCount << " vias, " 
+              << pdnSegCount << " PDN segments" << std::endl;
+    
     return true;
 }

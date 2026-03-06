@@ -38,9 +38,9 @@ inline int getIdx(int x, int y, int l, int gridH, int gridL) {
 }
 
 void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
-    // Use 1:1 grid mapping (no scaling) to prevent pin aliasing
-    gridW = gridW + 20;
-    gridH = gridH + 20;
+    // Use 1:1 grid mapping (no scaling) but with a massive padding to ensure Edge cells have routing space
+    gridW = gridW + 60;
+    gridH = gridH + 60;
     double scaleX = 1.0;
     double scaleY = 1.0;
     int maxIter = 30;
@@ -77,7 +77,8 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 int gx = (int)(pt.x / scaleX);
                 int gy = (int)(pt.y / scaleY);
                 if (gx >= 0 && gx < gridW && gy >= 0 && gy < gridH && pt.layer >= 1 && pt.layer < gridL) {
-                    obstacles[getIdx(gx, gy, pt.layer, gridH, gridL)] += 100;
+                    // Reduce penalty factor significantly. It's a hindrance, but not a solid wall since we can drop vias around it
+                    obstacles[getIdx(gx, gy, pt.layer, gridH, gridL)] += 2; 
                 }
             }
         }
@@ -300,7 +301,7 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 bool found = false;
                 int fx = -1, fy = -1, fl = -1;
 
-                // --- 3. DYNAMIC BOUNDING BOX ---
+                // 3. DYNAMIC BOUNDING BOX - INCREASE MARGIN DRAMATICALLY
                 int bbMinX = gridW, bbMaxX = 0, bbMinY = gridH, bbMaxY = 0;
                 for (Pin* p : net->connectedPins) {
                     if (!p || !p->inst) continue;
@@ -312,7 +313,8 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     bbMaxY = std::max(bbMaxY, py);
                 }
                 
-                int margin = 50 + (iter * 20); 
+                // Allow the router to swing wiiide around PDN via meshes
+                int margin = 100 + (iter * 50); 
                 bbMinX = std::max(1, bbMinX - margin);
                 bbMaxX = std::min(gridW - 2, bbMaxX + margin);
                 bbMinY = std::max(1, bbMinY - margin);
@@ -341,16 +343,16 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                         int ny = curr.y + dy[d];
                         int nl = curr.l + dl[d];
 
-                        // Stay within bounding box AND valid layers, with a 1-unit boundary Keep-Out Margin
+                        // Stay within bounding box AND valid layers, loosen boundary Keep-Out Margin so edge pins can escape
                         if (nx >= bbMinX && nx <= bbMaxX && ny >= bbMinY && ny <= bbMaxY && 
-                            nx >= 1 && nx < gridW - 1 && ny >= 1 && ny < gridH - 1 && 
+                            nx >= 0 && nx < gridW && ny >= 0 && ny < gridH && 
                             nl >= 1 && nl < gridL) {
                             int nIdx = getIdx(nx, ny, nl, gridH, gridL);
                             double stepCost = 1.0; 
                             
                             if (dl[d] != 0) {
-                                // Switching layers (Via)
-                                stepCost = 5.0; 
+                                // Switching layers (Via) - Make it cheaper to jump layers to bypass congestion
+                                stepCost = 4.0; 
                             } else if (nl == 1) {
                                 // LAYER 1 (M1): Very expensive local driveway
                                 stepCost = 15.0; 
@@ -370,12 +372,9 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                             double congCost = 0.0;
                             if (netUsedNodes.find({nx,ny,nl}) == netUsedNodes.end()) {
                                 if (usage[nIdx] > 0 || obstacles[nIdx] > 0) {
-                                    congCost = (usage[nIdx] + obstacles[nIdx]) * 500.0;
+                                    congCost = (usage[nIdx] * 15000.0) + (obstacles[nIdx] * 50.0); // Severely penalize hitting dynamic nets, lightly penalize shadow of static nets
                                 }
-                                // Pin Keep-Out Zone: Massively penalize if stepping on SOMEONE ELSE's pin
-                                if (pinOwner[nIdx] != nullptr && pinOwner[nIdx] != net) {
-                                    congCost += 25000.0; // Absolute wall
-                                }
+                                // Removed massive pin keep-out penalty. In hyper-dense blocks like our CTS buffer, pins are adjacent.
                             }
                             
                             double newCost = curr.gCost + (stepCost * history[nIdx]) + congCost;
@@ -388,12 +387,12 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                             
                             if (newCost < minCost[nIdx]) {
                                 minCost[nIdx] = newCost;
-                                // 3D Manhattan Heuristic
+                                // --- 1. RELAX A* HEURISTIC (Dijkstra-like exploration) ---
+                                // The dense PDN grid makes the Manhattan distance an unreliable heuristic.
+                                // Reducing the multiplier forces the algorithm to explore sideways paths.
                                 double h = std::abs(ex - nx) + std::abs(ey - ny) + std::abs(el - nl)*10.0;
                                 parent[nIdx] = curr; 
-                                
-                                // --- 1. WEIGHTED A* SPEED HACK ---
-                                pq.push({nx, ny, nl, newCost, newCost + (h * 1.5), curr.x, curr.y, curr.l});
+                                pq.push({nx, ny, nl, newCost, newCost + (h * 1.0), curr.x, curr.y, curr.l});
                             }
                         }
                     }
@@ -451,19 +450,51 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
         
         // Post-Iteration: Check for conflicts and update history map
         int conflicts = 0;
-        for (int x = 0; x < gridW; ++x) {
-            for (int y = 0; y < gridH; ++y) {
-                for (int l = 1; l < gridL; ++l) {
-                    int idx = getIdx(x, y, l, gridH, gridL);
-                    // An actual conflict = multiple routed nets overlap (usage > 1),
-                    // OR a routed net overlaps a static obstacle (usage > 0 && obstacles > 0).
-                    if (usage[idx] > 1 || (usage[idx] > 0 && obstacles[idx] > 0)) {
-                        conflicts++;
-                        // Add jitter to prevent symmetric oscillation
-                        history[idx] += 50.0 + ((rand() % 100) / 10.0);
-                    }
+        float current_penalty_multiplier = (iter > 5) ? 1.5f : 1.0f;
+
+        // --- PIN WHITELIST HELPER ---
+        // Pins physically reside on Layer 1. Check if a coordinate is a legal pin for this net.
+        auto isLegalPinJunction = [&](Net* net, int x, int y, int z) -> bool {
+            if (z != 1) return false; // All pins are on Layer 1
+            for (Pin* pin : net->connectedPins) {
+                if (!pin || !pin->inst) continue;
+                if ((int)pin->getAbsX() == x && (int)pin->getAbsY() == y) {
+                    return true;
                 }
             }
+            return false;
+        };
+
+        for (Net* net : design.nets) {
+            if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
+
+            int local_conflicts = 0;
+
+            for (size_t i = 0; i < net->routePath.size(); ++i) {
+                auto& pt = net->routePath[i];
+                int px = std::max(0, std::min(gridW-1, (int)(pt.x / scaleX)));
+                int py = std::max(0, std::min(gridH-1, (int)(pt.y / scaleY)));
+                int idx = getIdx(px, py, pt.layer, gridH, gridL);
+
+                // If the grid node has more than 1 net on it...
+                if (usage[idx] > 1) {
+
+                    // --- THE WHITELIST CHECK ---
+                    // If this coordinate is exactly the origin or destination pin,
+                    // it is legally allowed to share this space!
+                    if (isLegalPinJunction(net, pt.x, pt.y, pt.layer)) {
+                        continue; // Ignore! Do not flag as a conflict.
+                    }
+
+                    // Otherwise, it's a real mid-wire collision. Punish it.
+                    local_conflicts++;
+
+                    // Aggressive history scaling to force rip-up
+                    history[idx] += current_penalty_multiplier * 2.5f;
+                }
+            }
+
+            conflicts += local_conflicts;
         }
         
         if (conflicts > 0) {
@@ -545,35 +576,38 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             Point& p = net->routePath[i];
             auto key = std::make_tuple(p.x, p.y, p.layer);
             
-            // Register this net's ownership if cell is empty
-            if (occupancy.count(key) == 0) {
-                occupancy[key] = net;
-            }
-            
+            // Re-check ownership
             if (occupancy.count(key) && occupancy[key] != net) {
-                // Conflict! Try shifting this point to find empty space
+                // TRUE CONFLICT! Two dynamic nets want this cell.
                 bool resolved = false;
-                int dx[] = {0, 0, 1, -1, 1, -1, 1, -1};
-                int dy[] = {1, -1, 0, 0, 1, 1, -1, -1};
                 
-                for (int dist = 1; dist <= 3 && !resolved; ++dist) {
-                    for (int d = 0; d < 8 && !resolved; ++d) {
-                        int nx = p.x + dx[d] * dist;
-                        int ny = p.y + dy[d] * dist;
-                        // 1-unit Keep-Out Margin for jog insertion
-                        if (nx >= 1 && nx < gridW - 1 && ny >= 1 && ny < gridH - 1) {
-                            auto newKey = std::make_tuple(nx, ny, p.layer);
-                            if (occupancy.count(newKey) == 0) {
-                                // Dynamic occupancy update: free old spot, claim new
-                                p.x = nx;
-                                p.y = ny;
-                                occupancy[newKey] = net;
-                                jogsInserted++;
-                                resolved = true;
-                            }
+                // Extremely simple jog logic: attempt a tiny X/Y shift, or jump up a layer (Via drop)
+                int dx[] = {1, 0, -1, 0, 0};
+                int dy[] = {0, 1, 0, -1, 0};
+                int dL[] = {0, 0, 0, 0, 1}; // The 5th option is Z+1
+                
+                for (int d = 0; d < 5 && !resolved; ++d) {
+                    int nx = p.x + dx[d];
+                    int ny = p.y + dy[d];
+                    int nl = p.layer + dL[d];
+                    
+                    if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH && nl < gridL) {
+                        auto newKey = std::make_tuple(nx, ny, nl);
+                        
+                        if (occupancy.count(newKey) == 0) {
+                            occupancy.erase(key);
+                            p.x = nx;
+                            p.y = ny;
+                            p.layer = nl;
+                            occupancy[newKey] = net;
+                            jogsInserted++;
+                            resolved = true;
                         }
                     }
                 }
+            } else {
+                // We successfully claimed this spot. Ensure it belongs to us in the global map
+                occupancy[key] = net;
             }
         }
     }

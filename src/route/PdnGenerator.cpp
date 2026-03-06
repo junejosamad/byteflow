@@ -28,52 +28,102 @@ void PdnGenerator::run() {
         design->nets.push_back(vss);
     }
 
-    // 2. Draw Horizontal Rails (Metal 1) - One per Row
-    int numRows = (int)(coreHeight / rowHeight);
+    // 2. Draw Horizontal Logic Rails (Metal 1) - One per Row
+    int numRows = (int)(coreHeight / m1RowHeight);
     
     for (int i = 0; i < numRows; ++i) {
-        double y = i * rowHeight;
+        double y = i * m1RowHeight;
         Net* currentNet = (i % 2 == 0) ? vss : vdd; // Alternate VSS/VDD
         
-        // We simulate a rail by adding a 2-point path segment
-        // Point 1 (Left Edge)
-        Point p1; 
-        p1.x = 0; 
-        p1.y = (int)y; 
-        p1.layer = 1; // Metal 1
-        
-        // Point 2 (Right Edge)
-        Point p2; 
-        p2.x = (int)coreWidth; 
-        p2.y = (int)y; 
-        p2.layer = 1;
+        Point p1; p1.x = 0; p1.y = (int)y; p1.layer = 1; // Metal 1
+        Point p2; p2.x = (int)coreWidth; p2.y = (int)y; p2.layer = 1;
 
-        // Add to route path
         currentNet->routePath.push_back(p1);
         currentNet->routePath.push_back(p2);
     }
-    std::cout << "  Generated " << numRows << " horizontal M1 rails.\n";
+    std::cout << "  Generated " << numRows << " M1 Standard Cell Power Rails.\n";
 
-    // 3. Draw Vertical Stripes (Metal 2)
-    int numStripes = (int)(coreWidth / stripeSpacing);
-    
-    for (int i = 1; i <= numStripes; ++i) {
-        double x = i * stripeSpacing;
+    // 3. Draw Vertical Macro Stripes (Metal 3)
+    int numM3Stripes = (int)(coreWidth / m3StripeSpacing);
+    for (int i = 1; i <= numM3Stripes; ++i) {
+        double x = i * m3StripeSpacing;
         
         // VSS Stripe (Left side of the pair)
-        Point vss_p1; vss_p1.x = (int)x; vss_p1.y = 0; vss_p1.layer = 2; // Metal 2
-        Point vss_p2; vss_p2.x = (int)x; vss_p2.y = (int)coreHeight; vss_p2.layer = 2;
+        Point vss_p1; vss_p1.x = (int)x; vss_p1.y = 0; vss_p1.layer = 3; // Metal 3
+        Point vss_p2; vss_p2.x = (int)x; vss_p2.y = (int)coreHeight; vss_p2.layer = 3;
         vss->routePath.push_back(vss_p1);
         vss->routePath.push_back(vss_p2);
 
-        // VDD Stripe (Offset by half spacing)
-        double x_vdd = x + (stripeSpacing / 2.0);
+        // Drop vias from M3 to M1 rows
+        for (int row = 0; row < numRows; ++row) {
+            if (row % 2 == 0) { // If this row is VSS
+                Point via_m3; via_m3.x = (int)x; via_m3.y = (int)(row * m1RowHeight); via_m3.layer = 3;
+                Point via_m1; via_m1.x = (int)x; via_m1.y = (int)(row * m1RowHeight); via_m1.layer = 1;
+                vss->routePath.push_back(via_m3);
+                vss->routePath.push_back(via_m1);
+            }
+        }
+
+        // VDD Stripe (Offset by 5um to create a wide pair)
+        double x_vdd = x + 5.0; 
         if (x_vdd < coreWidth) {
-            Point vdd_p1; vdd_p1.x = (int)x_vdd; vdd_p1.y = 0; vdd_p1.layer = 2;
-            Point vdd_p2; vdd_p2.x = (int)x_vdd; vdd_p2.y = (int)coreHeight; vdd_p2.layer = 2;
+            Point vdd_p1; vdd_p1.x = (int)x_vdd; vdd_p1.y = 0; vdd_p1.layer = 3;
+            Point vdd_p2; vdd_p2.x = (int)x_vdd; vdd_p2.y = (int)coreHeight; vdd_p2.layer = 3;
             vdd->routePath.push_back(vdd_p1);
             vdd->routePath.push_back(vdd_p2);
+
+            // Drop vias from M3 to M1 rows
+            for (int row = 0; row < numRows; ++row) {
+                if (row % 2 != 0) { // If this row is VDD
+                    Point via_m3; via_m3.x = (int)x_vdd; via_m3.y = (int)(row * m1RowHeight); via_m3.layer = 3;
+                    Point via_m1; via_m1.x = (int)x_vdd; via_m1.y = (int)(row * m1RowHeight); via_m1.layer = 1;
+                    vdd->routePath.push_back(via_m3);
+                    vdd->routePath.push_back(via_m1);
+                }
+            }
         }
     }
-    std::cout << "  Generated vertical M2 stripes.\n";
+    std::cout << "  Generated " << numM3Stripes*2 << " Vertical M3 Stripes with M3->M1 Via Arrays.\n";
+
+    // 4. Draw Horizontal Macro Stripes (Metal 4)
+    int numM4Stripes = (int)(coreHeight / m4StripeSpacing);
+    for (int i = 1; i <= numM4Stripes; ++i) {
+        double y = i * m4StripeSpacing;
+
+        // VSS Stripe (Bottom side of pair)
+        Point vss_p1; vss_p1.x = 0; vss_p1.y = (int)y; vss_p1.layer = 4; // Metal 4
+        Point vss_p2; vss_p2.x = (int)coreWidth; vss_p2.y = (int)y; vss_p2.layer = 4;
+        vss->routePath.push_back(vss_p1);
+        vss->routePath.push_back(vss_p2);
+
+        // Drop vias from M4 to M3 VSS stripes
+        for (int j = 1; j <= numM3Stripes; ++j) {
+            double x = j * m3StripeSpacing;
+            Point via_m4; via_m4.x = (int)x; via_m4.y = (int)y; via_m4.layer = 4;
+            Point via_m3; via_m3.x = (int)x; via_m3.y = (int)y; via_m3.layer = 3;
+            vss->routePath.push_back(via_m4);
+            vss->routePath.push_back(via_m3);
+        }
+
+        // VDD Stripe (Top side of pair, offset by 5um)
+        double y_vdd = y + 5.0;
+        if (y_vdd < coreHeight) {
+            Point vdd_p1; vdd_p1.x = 0; vdd_p1.y = (int)y_vdd; vdd_p1.layer = 4;
+            Point vdd_p2; vdd_p2.x = (int)coreWidth; vdd_p2.y = (int)y_vdd; vdd_p2.layer = 4;
+            vdd->routePath.push_back(vdd_p1);
+            vdd->routePath.push_back(vdd_p2);
+
+            // Drop vias from M4 to M3 VDD stripes
+            for (int j = 1; j <= numM3Stripes; ++j) {
+                double x_vdd = (j * m3StripeSpacing) + 5.0;
+                if (x_vdd < coreWidth) {
+                    Point via_m4; via_m4.x = (int)x_vdd; via_m4.y = (int)y_vdd; via_m4.layer = 4;
+                    Point via_m3; via_m3.x = (int)x_vdd; via_m3.y = (int)y_vdd; via_m3.layer = 3;
+                    vdd->routePath.push_back(via_m4);
+                    vdd->routePath.push_back(via_m3);
+                }
+            }
+        }
+    }
+    std::cout << "  Generated " << numM4Stripes*2 << " Horizontal M4 Stripes with M4->M3 Via Arrays.\n";
 }
