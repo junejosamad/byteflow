@@ -1,54 +1,612 @@
 library(simple) {
+    /* ================================================================
+     * Byteflow Standard Cell Library - 45nm Generic Process
+     * PHASE 5: Full NLDM Timing Characterization
+     * 
+     * Index 1: Input transition time (slew) in ps
+     * Index 2: Output load capacitance in fF
+     * Values : Delay / transition time in ps
+     * ================================================================ */
+
     cell(BUF) {
-        area: 6;
-        pin(A) { direction: input; }
-        pin(Y) { direction: output; function: "A"; }
+        area : 6;
+        pin(A) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(Y) {
+            direction : output;
+            function : "A";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("12.0, 18.0, 35.0", \
+                           "15.0, 22.0, 42.0", \
+                           "25.0, 35.0, 65.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("10.0, 16.0, 32.0", \
+                           "13.0, 20.0, 38.0", \
+                           "22.0, 32.0, 60.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("15.0, 25.0, 55.0", \
+                           "20.0, 35.0, 75.0", \
+                           "40.0, 60.0, 120.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("13.0, 22.0, 50.0", \
+                           "18.0, 30.0, 68.0", \
+                           "35.0, 55.0, 110.0");
+                }
+            }
+        }
     }
+
     cell(NOT) {
-        area: 3;
-        pin(A) { direction: input; }
-        pin(Y) { direction: output; function: "!A"; }
+        area : 3;
+        pin(A) {
+            direction : input;
+            capacitance : 0.003;
+        }
+        pin(Y) {
+            direction : output;
+            function : "!A";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("8.0, 14.0, 28.0", \
+                           "11.0, 18.0, 35.0", \
+                           "20.0, 30.0, 55.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("7.0, 12.0, 25.0", \
+                           "10.0, 16.0, 32.0", \
+                           "18.0, 28.0, 50.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("12.0, 20.0, 45.0", \
+                           "16.0, 28.0, 60.0", \
+                           "30.0, 50.0, 100.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("10.0, 18.0, 40.0", \
+                           "14.0, 25.0, 55.0", \
+                           "28.0, 45.0, 90.0");
+                }
+            }
+        }
     }
+
     cell(NAND2) {
-        area: 4;
-        pin(A) { direction: input; }
-        pin(B) { direction: input; }
-        pin(Y) { direction: output; function: "!(A&B)"; }
+        area : 4;
+        pin(A) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(Y) {
+            direction : output;
+            function : "!(A&B)";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 55.0", \
+                           "22.0, 35.0, 68.0", \
+                           "38.0, 55.0, 100.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("15.0, 25.0, 50.0", \
+                           "20.0, 32.0, 62.0", \
+                           "35.0, 50.0, 92.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 32.0, 70.0", \
+                           "28.0, 45.0, 95.0", \
+                           "50.0, 75.0, 150.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 62.0", \
+                           "25.0, 40.0, 85.0", \
+                           "45.0, 68.0, 135.0");
+                }
+            }
+
+            timing() {
+                related_pin : "B";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 30.0, 58.0", \
+                           "25.0, 38.0, 72.0", \
+                           "42.0, 60.0, 108.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("16.0, 26.0, 52.0", \
+                           "22.0, 34.0, 65.0", \
+                           "38.0, 55.0, 98.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("22.0, 35.0, 75.0", \
+                           "30.0, 48.0, 100.0", \
+                           "55.0, 80.0, 160.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 30.0, 68.0", \
+                           "28.0, 42.0, 90.0", \
+                           "48.0, 72.0, 142.0");
+                }
+            }
+        }
     }
+
     cell(NOR2) {
-        area: 4;
-        pin(A) { direction: input; }
-        pin(B) { direction: input; }
-        pin(Y) { direction: output; function: "!(A|B)"; }
+        area : 4;
+        pin(A) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(Y) {
+            direction : output;
+            function : "!(A|B)";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("22.0, 35.0, 68.0", \
+                           "28.0, 42.0, 82.0", \
+                           "45.0, 65.0, 120.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("14.0, 22.0, 45.0", \
+                           "18.0, 28.0, 55.0", \
+                           "30.0, 45.0, 85.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("25.0, 40.0, 85.0", \
+                           "35.0, 55.0, 110.0", \
+                           "60.0, 90.0, 175.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("16.0, 25.0, 55.0", \
+                           "22.0, 35.0, 72.0", \
+                           "40.0, 60.0, 120.0");
+                }
+            }
+
+            timing() {
+                related_pin : "B";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("24.0, 38.0, 72.0", \
+                           "30.0, 45.0, 88.0", \
+                           "48.0, 70.0, 128.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("15.0, 24.0, 48.0", \
+                           "20.0, 30.0, 58.0", \
+                           "32.0, 48.0, 90.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("28.0, 42.0, 90.0", \
+                           "38.0, 58.0, 118.0", \
+                           "65.0, 95.0, 185.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 58.0", \
+                           "24.0, 38.0, 78.0", \
+                           "42.0, 65.0, 128.0");
+                }
+            }
+        }
     }
+
     cell(AND2) {
-        area: 4;
-        pin(A) { direction: input; }
-        pin(B) { direction: input; }
-        pin(Y) { direction: output; function: "(A&B)"; }
+        area : 4;
+        pin(A) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(Y) {
+            direction : output;
+            function : "(A&B)";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 32.0, 62.0", \
+                           "25.0, 40.0, 78.0", \
+                           "42.0, 62.0, 115.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 55.0", \
+                           "22.0, 35.0, 70.0", \
+                           "38.0, 55.0, 105.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("22.0, 35.0, 75.0", \
+                           "30.0, 48.0, 100.0", \
+                           "55.0, 82.0, 162.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 30.0, 68.0", \
+                           "28.0, 42.0, 90.0", \
+                           "48.0, 72.0, 142.0");
+                }
+            }
+
+            timing() {
+                related_pin : "B";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("22.0, 34.0, 65.0", \
+                           "28.0, 42.0, 82.0", \
+                           "45.0, 65.0, 120.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 30.0, 58.0", \
+                           "25.0, 38.0, 74.0", \
+                           "42.0, 60.0, 110.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("24.0, 38.0, 80.0", \
+                           "32.0, 52.0, 108.0", \
+                           "58.0, 88.0, 172.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("22.0, 32.0, 72.0", \
+                           "30.0, 45.0, 95.0", \
+                           "52.0, 78.0, 152.0");
+                }
+            }
+        }
     }
+
     cell(OR2) {
-        area: 4;
-        pin(A) { direction: input; }
-        pin(B) { direction: input; }
-        pin(Y) { direction: output; function: "(A|B)"; }
+        area : 4;
+        pin(A) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.004;
+        }
+        pin(Y) {
+            direction : output;
+            function : "(A|B)";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 55.0", \
+                           "22.0, 35.0, 68.0", \
+                           "38.0, 55.0, 100.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("16.0, 25.0, 50.0", \
+                           "20.0, 32.0, 62.0", \
+                           "35.0, 50.0, 92.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 32.0, 70.0", \
+                           "28.0, 45.0, 95.0", \
+                           "50.0, 78.0, 155.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 62.0", \
+                           "25.0, 40.0, 85.0", \
+                           "45.0, 68.0, 135.0");
+                }
+            }
+
+            timing() {
+                related_pin : "B";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 30.0, 58.0", \
+                           "25.0, 38.0, 72.0", \
+                           "42.0, 60.0, 108.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("18.0, 28.0, 54.0", \
+                           "22.0, 35.0, 68.0", \
+                           "38.0, 55.0, 100.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("22.0, 35.0, 75.0", \
+                           "30.0, 48.0, 100.0", \
+                           "55.0, 82.0, 162.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("20.0, 30.0, 68.0", \
+                           "28.0, 42.0, 90.0", \
+                           "48.0, 72.0, 142.0");
+                }
+            }
+        }
     }
+
     cell(XOR2) {
-        area: 4;
-        pin(A) { direction: input; }
-        pin(B) { direction: input; }
-        pin(Y) { direction: output; function: "(A^B)"; }
+        area : 4;
+        pin(A) {
+            direction : input;
+            capacitance : 0.005;
+        }
+        pin(B) {
+            direction : input;
+            capacitance : 0.005;
+        }
+        pin(Y) {
+            direction : output;
+            function : "(A^B)";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("28.0, 42.0, 82.0", \
+                           "35.0, 52.0, 100.0", \
+                           "55.0, 80.0, 150.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("25.0, 38.0, 75.0", \
+                           "32.0, 48.0, 92.0", \
+                           "50.0, 72.0, 138.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("30.0, 48.0, 100.0", \
+                           "40.0, 62.0, 130.0", \
+                           "72.0, 108.0, 210.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("28.0, 42.0, 92.0", \
+                           "35.0, 55.0, 118.0", \
+                           "65.0, 95.0, 190.0");
+                }
+            }
+
+            timing() {
+                related_pin : "B";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("30.0, 45.0, 88.0", \
+                           "38.0, 55.0, 105.0", \
+                           "58.0, 85.0, 158.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("28.0, 42.0, 80.0", \
+                           "35.0, 52.0, 98.0", \
+                           "55.0, 78.0, 148.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("32.0, 50.0, 105.0", \
+                           "42.0, 65.0, 138.0", \
+                           "78.0, 115.0, 225.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("30.0, 45.0, 98.0", \
+                           "38.0, 58.0, 125.0", \
+                           "70.0, 102.0, 200.0");
+                }
+            }
+        }
     }
+
     cell(DFF) {
-        area: 18;
-        ff(IQ, IQN) { clocked_on: C; next_state: D; }
-        pin(C) { direction: input; clock: true; }
-        pin(D) { direction: input; }
-        pin(Q) { direction: output; function: "IQ"; }
+        area : 18;
+        ff(IQ, IQN) { clocked_on : C; next_state : D; }
+        pin(C) {
+            direction : input;
+            clock : true;
+            capacitance : 0.006;
+        }
+        pin(D) {
+            direction : input;
+            capacitance : 0.004;
+
+            timing() {
+                related_pin : "C";
+                setup_constraint : 50.0;
+                hold_constraint : 20.0;
+            }
+        }
+        pin(Q) {
+            direction : output;
+            function : "IQ";
+
+            timing() {
+                related_pin : "C";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("45.0, 65.0, 120.0", \
+                           "50.0, 72.0, 135.0", \
+                           "65.0, 90.0, 165.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("40.0, 58.0, 110.0", \
+                           "45.0, 65.0, 125.0", \
+                           "60.0, 82.0, 155.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("50.0, 78.0, 160.0", \
+                           "58.0, 90.0, 185.0", \
+                           "80.0, 120.0, 240.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("45.0, 70.0, 145.0", \
+                           "52.0, 82.0, 168.0", \
+                           "72.0, 110.0, 220.0");
+                }
+            }
+        }
     }
+
     cell(CLKBUF) {
-        area: 10;
-        pin(A) { direction: input; }
-        pin(Y) { direction: output; function: "A"; }
+        area : 10;
+        pin(A) {
+            direction : input;
+            capacitance : 0.010;
+        }
+        pin(Y) {
+            direction : output;
+            function : "A";
+
+            timing() {
+                related_pin : "A";
+
+                cell_rise(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("8.0, 12.0, 25.0", \
+                           "10.0, 15.0, 30.0", \
+                           "16.0, 22.0, 45.0");
+                }
+                cell_fall(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("7.0, 11.0, 22.0", \
+                           "9.0, 14.0, 28.0", \
+                           "14.0, 20.0, 40.0");
+                }
+                rise_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("10.0, 18.0, 40.0", \
+                           "14.0, 22.0, 50.0", \
+                           "25.0, 38.0, 80.0");
+                }
+                fall_transition(nldm_3x3) {
+                    index_1("10.0, 50.0, 200.0");
+                    index_2("1.0, 5.0, 20.0");
+                    values("9.0, 15.0, 35.0", \
+                           "12.0, 20.0, 45.0", \
+                           "22.0, 35.0, 72.0");
+                }
+            }
+        }
     }
 }

@@ -51,6 +51,9 @@ if(BUILD_PYTHON_MODULE)
         ${CMAKE_SOURCE_DIR}/$<TARGET_FILE_NAME:open_eda>
     )
 else()
+    # Remove PyBindings.cpp (requires pybind11 headers)
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/scripting/PyBindings.cpp")
+
     # Define the standalone executable
     add_executable(open_eda ${SOURCES})
 endif()

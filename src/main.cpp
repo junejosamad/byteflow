@@ -24,6 +24,7 @@
 #include "gui/GuiEngine.h"
 #include "export/GdsExporter.h"
 #include "timer/Timer.h"
+#include "analysis/SpefEngine.h"  // PHASE 5: RC Parasitic Extraction
 
 int main(int argc, char* argv[]) {
     std::cout << "--- OpenEDA System Initializing ---\n";
@@ -143,7 +144,7 @@ int main(int argc, char* argv[]) {
                   << " (" << chip.instances.size() << " cells)\n";
 
         StaEngine timer;
-        Timer physicsTimer(&chip);
+        Timer physicsTimer(&chip, &lib, nullptr);
         physicsTimer.buildGraph();
         PlaceEngine placer(&chip, &physicsTimer);
         RouteEngine router;
@@ -194,51 +195,49 @@ int main(int argc, char* argv[]) {
         router.runRouting(chip, 400, 400);
         */
 
-        // 10. FINAL SIGN-OFF
-        std::cout << "\n--- Final Sign-off STA ---\n";
+        // 10. PHASE 5: RC PARASITIC EXTRACTION
+        SpefEngine spef;
+        spef.extract(chip);
+        std::string spefName = filename.substr(0, filename.find_last_of(".")) + ".spef";
+        spef.writeSpef(spefName, chip);
+
+        // 11. FINAL SIGN-OFF STA (with NLDM + Elmore Physics)
+        std::cout << "\n--- Final Sign-off STA (Phase 5: NLDM + Elmore) ---\n";
+        Timer finalTimer(&chip, &lib, &spef);
+        finalTimer.buildGraph();
+        finalTimer.setClockPeriod(1000.0); // 1 GHz target
+        finalTimer.updateTiming();
+        finalTimer.reportCriticalPath();
+
+        // Legacy STA report (for comparison)
         timer.updateTiming(chip);
         timer.reportTiming(chip);
 
         // Level 3: Power Analysis
         power.reportPower(chip, 1.0, 1000.0);
 
-        // 10. FINAL SIGN-OFF
-        std::cout << "\n--- Final Sign-off STA ---\n";
-        timer.updateTiming(chip);
-        timer.reportTiming(chip);
-
-        power.reportPower(chip, 1.0, 1000.0);
-
-        // 11. PHYSICAL VERIFICATION (DRC)
+        // 12. PHYSICAL VERIFICATION (DRC)
         DrcEngine drc;
         drc.runDRC(chip);
 
-
-        // 12. EXPORT RESULTS
+        // 13. EXPORT RESULTS
         VerilogWriter writer;
         std::string outName = filename.substr(0, filename.find_last_of(".")) + "_routed.v";
         writer.write(chip, outName);
 
-        // 13. EXPORT DEF (Industry Standard)
+        // 14. EXPORT DEF (Industry Standard)
         DefExporter defExporter;
         std::string defName = filename.substr(0, filename.find_last_of(".")) + ".def";
         defExporter.writeDEF(defName, &chip, coreSize, coreSize);
 
-        // 13B. EXPORT GDSII (Silicon Tape-Out)
+        // 15. EXPORT GDSII (Silicon Tape-Out)
         std::string gdsName = filename.substr(0, filename.find_last_of(".")) + "_layout.gds";
         GdsExporter::exportGds(gdsName, &chip);
 
-        // 14. EXPORT PYTHON SCRIPT (Crash-Proof)
+        // 16. EXPORT PYTHON SCRIPT
         ScriptExporter scriptWriter;
         std::string pyName = filename.substr(0, filename.find_last_of(".")) + "_load.py";
         scriptWriter.write(chip, pyName);
-
-        // 14. TIMING ANALYSIS (Phase 1 Complete)
-        // 14. TIMING ANALYSIS (Phase 1 Complete)
-        Timer finalTimer(&chip);
-        finalTimer.buildGraph();
-        finalTimer.updateTiming();
-        finalTimer.reportCriticalPath();
 
         // Snapshot C: Final Routed State
         std::cout << "\n[Visualizer] Capturing Final Routed State...\n";
