@@ -8,6 +8,8 @@ public:
     void run();
 
 private:
+    void createMacroRings(Net* vdd, Net* vss);
+
     Design* design;
     
     // Configurable PDN Parameters

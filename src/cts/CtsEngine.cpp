@@ -21,18 +21,53 @@ bool CtsEngine::runCTS(Design* design, const std::string& clockNetName) {
         return false;
     }
 
-    // 2. Extract Sinks (Flip-Flop Clock Pins)
-    std::vector<Pin*> sinks;
-    for (Pin* pin : clkNet->connectedPins) {
-        // Typically clock pins are inputs to sequential logic
-        if (!pin->isOutput && pin->inst && pin->inst->type && pin->inst->type->isSequential) {
-            sinks.push_back(pin);
-        }
-    }
+    // 2. Extract Sinks (Flip-Flop Clock Pins and Macro Clock Pins)
+    auto extractSinks = [](Net* net) -> std::vector<Pin*> {
+        std::vector<Pin*> foundSinks;
+        for (Pin* pin : net->connectedPins) {
+            if (!pin->isOutput && pin->inst && pin->inst->type) {
+                // Determine if this is a standard cell sequential clock pin (usually 'clk', 'c', or generic)
+                bool isSeqClock = pin->inst->type->isSequential;
+                
+                // Determine if this is a Macro clock pin (e.g. SRAM1024x32 .clk)
+                bool isMacroClock = pin->inst->type->isMacro && (pin->name.find("clk") != std::string::npos || pin->name.find("ck") != std::string::npos || pin->name.find("CLK") != std::string::npos);
 
+                if (isSeqClock || isMacroClock) {
+                    foundSinks.push_back(pin);
+                }
+            }
+        }
+        return foundSinks;
+    };
+
+    std::vector<Pin*> sinks = extractSinks(clkNet);
     std::cout << "[CTS] Found " << sinks.size() << " sinks on net '" << clockNetName << "'.\n";
 
-    if (sinks.empty()) return false;
+    // --- NEW: AUTO-DISCOVERY IF USER PROVIDED WRONG CLOCK NET ---
+    if (sinks.empty()) {
+        std::cout << "[CTS] Warning: 0 sinks found on '" << clockNetName << "'. Initiating auto-discovery for buffered clock tree...\n";
+        
+        Net* bestCandidate = nullptr;
+        size_t maxSinks = 0;
+        
+        for (Net* checkNet : design->nets) {
+            std::vector<Pin*> candidateSinks = extractSinks(checkNet);
+            if (candidateSinks.size() > maxSinks) {
+                maxSinks = candidateSinks.size();
+                bestCandidate = checkNet;
+            }
+        }
+        
+        if (bestCandidate && maxSinks > 0) {
+            std::cout << "[CTS] Auto-Discovery Success: Built tree on internal net '" << bestCandidate->name 
+                      << "' which drives " << maxSinks << " sequential/macro endpoints.\n";
+            clkNet = bestCandidate;
+            sinks = extractSinks(clkNet);
+        } else {
+            std::cout << "[CTS] Auto-Discovery Failed. No clock sinks detected anywhere in the design database.\n";
+            return false;
+        }
+    }
 
     // 3. Run Method of Means and Medians (MMM) to build the theoretical tree
     clockTreeRoot = buildMMM(sinks);

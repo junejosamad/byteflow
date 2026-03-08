@@ -25,6 +25,8 @@
 #include "export/GdsExporter.h"
 #include "timer/Timer.h"
 #include "analysis/SpefEngine.h"  // PHASE 5: RC Parasitic Extraction
+#include "floorplan/Floorplanner.h" // PHASE 6: Macro Floorplanning
+
 
 int main(int argc, char* argv[]) {
     std::cout << "--- OpenEDA System Initializing ---\n";
@@ -121,10 +123,12 @@ int main(int argc, char* argv[]) {
 
     // 3. PARSE DESIGN (first create the Design so LEF can populate it)
     Design chip;
+    chip.cellLibrary = &lib;
 
     // 2b. LOAD PHYSICAL GEOMETRY (LEF)
     LefParser lefParser;
     lefParser.parse("benchmarks/open_eda.lef", &chip);
+    lefParser.parse("benchmarks/sram.lef", &chip);
 
     // 3. PARSE NETLIST
     VerilogParser parser;
@@ -158,6 +162,10 @@ int main(int argc, char* argv[]) {
         timer.updateTiming(chip);
         timer.reportTiming(chip);
         timer.checkConstraints(chip, 10.0);
+
+        // 4b. MACRO FLOORPLANNING
+        Floorplanner fp;
+        fp.placeMacros(chip);
 
         // Snapshot A: Random Initial State
         std::cout << "\n[Visualizer] Capturing Random Initial State...\n";

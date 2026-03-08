@@ -50,6 +50,21 @@ void Legalizer::run() {
         
         // Snap to manufacturing grid (siteWidth)
         newX = std::round(newX / siteWidth) * siteWidth;
+
+        // Check overlaps with any macros intersecting this row
+        for (GateInstance* macro : design->instances) {
+            if (macro->isFixed && macro->type->isMacro) {
+                // Check if macro intersects targetRow's Y-span
+                if (targetRow.y + rowHeight > macro->y && targetRow.y < macro->y + macro->type->height) {
+                    // Check if our cell at newX overlaps macro's X-span
+                    if (newX + inst->type->width > macro->x && newX < macro->x + macro->type->width) {
+                        // Push cell to the right of the macro + safety site
+                        newX = macro->x + macro->type->width + siteWidth;
+                        newX = std::round(newX / siteWidth) * siteWidth;
+                    }
+                }
+            }
+        }
         
         // --- CORE MARGIN ENFORCEMENT ---
         // Prevent cells from being placed flush against the boundary power rings

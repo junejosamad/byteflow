@@ -28,6 +28,9 @@ void PdnGenerator::run() {
         design->nets.push_back(vss);
     }
 
+    // 1.5. Macro Power Rings
+    createMacroRings(vdd, vss);
+
     // 2. Draw Horizontal Logic Rails (Metal 1) - One per Row
     int numRows = (int)(coreHeight / m1RowHeight);
     
@@ -126,4 +129,69 @@ void PdnGenerator::run() {
         }
     }
     std::cout << "  Generated " << numM4Stripes*2 << " Horizontal M4 Stripes with M4->M3 Via Arrays.\n";
+}
+
+void PdnGenerator::createMacroRings(Net* vdd, Net* vss) {
+    if (!vdd || !vss) return;
+
+    int numMacroRings = 0;
+    for (GateInstance* inst : design->instances) {
+        if (inst->isFixed && inst->type && inst->type->isMacro) {
+            double x1 = inst->x;
+            double y1 = inst->y;
+            double x2 = inst->x + inst->type->width;
+            double y2 = inst->y + inst->type->height;
+
+            // VSS Inner Ring (offset 2 units)
+            double vss_x1 = std::max(0.0, x1 - 2.0);
+            double vss_y1 = std::max(0.0, y1 - 2.0);
+            double vss_x2 = std::min(coreWidth, x2 + 2.0);
+            double vss_y2 = std::min(coreHeight, y2 + 2.0);
+
+            // Left M3
+            vss->routePath.push_back({(int)vss_x1, (int)vss_y1, 3});
+            vss->routePath.push_back({(int)vss_x1, (int)vss_y2, 3});
+            // Right M3
+            vss->routePath.push_back({(int)vss_x2, (int)vss_y1, 3});
+            vss->routePath.push_back({(int)vss_x2, (int)vss_y2, 3});
+            // Bottom M4
+            vss->routePath.push_back({(int)vss_x1, (int)vss_y1, 4});
+            vss->routePath.push_back({(int)vss_x2, (int)vss_y1, 4});
+            // Top M4
+            vss->routePath.push_back({(int)vss_x1, (int)vss_y2, 4});
+            vss->routePath.push_back({(int)vss_x2, (int)vss_y2, 4});
+            // Vias at 4 corners
+            vss->routePath.push_back({(int)vss_x1, (int)vss_y1, 3}); vss->routePath.push_back({(int)vss_x1, (int)vss_y1, 4});
+            vss->routePath.push_back({(int)vss_x2, (int)vss_y1, 3}); vss->routePath.push_back({(int)vss_x2, (int)vss_y1, 4});
+            vss->routePath.push_back({(int)vss_x1, (int)vss_y2, 3}); vss->routePath.push_back({(int)vss_x1, (int)vss_y2, 4});
+            vss->routePath.push_back({(int)vss_x2, (int)vss_y2, 3}); vss->routePath.push_back({(int)vss_x2, (int)vss_y2, 4});
+
+            // VDD Outer Ring (offset 4 units)
+            double vdd_x1 = std::max(0.0, x1 - 4.0);
+            double vdd_y1 = std::max(0.0, y1 - 4.0);
+            double vdd_x2 = std::min(coreWidth, x2 + 4.0);
+            double vdd_y2 = std::min(coreHeight, y2 + 4.0);
+
+            // Left M3
+            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 3});
+            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 3});
+            // Right M3
+            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 3});
+            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 3});
+            // Bottom M4
+            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 4});
+            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 4});
+            // Top M4
+            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 4});
+            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 4});
+            // Vias at 4 corners
+            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 3}); vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 4});
+            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 3}); vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 4});
+            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 3}); vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 4});
+            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 3}); vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 4});
+
+            numMacroRings++;
+        }
+    }
+    std::cout << "  Generated power rings for " << numMacroRings << " macros.\n";
 }

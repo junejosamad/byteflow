@@ -83,14 +83,18 @@
   <line x1="0" y1="390" x2="400" y2="390" stroke="#333" stroke-width="0.5"/>
   <line x1="0" y1="400" x2="400" y2="400" stroke="#333" stroke-width="0.5"/>
   
-  <rect x="0" y="0" width="2" height="2" fill="#4CAF50" stroke="black" stroke-width="0.5" />
-  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">g1</text>
-  <rect x="0" y="0" width="2" height="2" fill="#4CAF50" stroke="black" stroke-width="0.5" />
-  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">g2</text>
-  <rect x="0" y="0" width="2" height="2" fill="#4CAF50" stroke="black" stroke-width="0.5" />
-  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">g3</text>
-  <rect x="0" y="0" width="2" height="2" fill="#4CAF50" stroke="black" stroke-width="0.5" />
-  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">g4</text>
-  <rect x="0" y="0" width="2" height="2" fill="#4CAF50" stroke="black" stroke-width="0.5" />
-  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">g5</text>
+  <rect x="0" y="0" width="1" height="1" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">b_clk</text>
+  <rect x="0" y="0" width="1" height="1" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">b_en</text>
+  <rect x="0" y="0" width="1" height="1" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">b_addr</text>
+  <rect x="0" y="0" width="1" height="1" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">b_din</text>
+  <rect x="250" y="250" width="150" height="150" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="250" y="248" font-family="Arial" font-size="3" fill="#ccc">mem</text>
+  <rect x="0" y="0" width="1" height="1" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">n_out</text>
+  <rect x="0" y="0" width="1" height="1" fill="#4CAF50" stroke="black" stroke-width="0.5" />
+  <text x="0" y="-2" font-family="Arial" font-size="3" fill="#ccc">b_out</text>
 </svg>

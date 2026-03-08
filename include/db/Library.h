@@ -117,6 +117,7 @@ struct CellDef {
     double leakagePower = 0.0; // in nW (nanoWatts)
 
     bool isSequential = false; // True for Flip-Flops
+    bool isMacro = false;      // True for large IP blocks (SRAM, etc.)
     std::vector<PinDef> pins;
 
     // Scalar Delay Fallback (Average of Rise/Fall)

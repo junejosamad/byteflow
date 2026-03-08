@@ -12,7 +12,7 @@ void LefParser::parse(const std::string& filename, Design* design) {
     }
 
     std::string line;
-    Macro* currentMacro = nullptr;
+    CellDef* currentMacro = nullptr;
     std::string currentPinName = "";
 
     while (std::getline(file, line)) {
@@ -27,10 +27,15 @@ void LefParser::parse(const std::string& filename, Design* design) {
             iss >> macroName;
             
             // If Liberty parser hasn't created it yet, create it. Otherwise, fetch it.
-            if (design->library.find(macroName) == design->library.end()) {
-                design->library[macroName] = new Macro(macroName);
+            if (design->cellLibrary) {
+                currentMacro = design->cellLibrary->getCell(macroName);
+                if (!currentMacro) {
+                    currentMacro = new CellDef();
+                    currentMacro->name = macroName;
+                    design->cellLibrary->addCell(currentMacro);
+                }
+                // we'll determine if it's a true macro by its size
             }
-            currentMacro = design->library[macroName];
             
         } else if (token == "SIZE" && currentMacro) {
             double w, h;
@@ -39,23 +44,49 @@ void LefParser::parse(const std::string& filename, Design* design) {
             currentMacro->width = w;
             currentMacro->height = h;
             
+            // Standard cells are small (e.g. 1x1, 4x2). Real SoC Macros (SRAM) are large.
+            if (w > 10.0 || h > 10.0) {
+                currentMacro->isMacro = true;
+            } else {
+                currentMacro->isMacro = false;
+            }
+            
         } else if (token == "PIN" && currentMacro) {
             iss >> currentPinName;
-            currentMacro->pins[currentPinName].name = currentPinName;
+            
+            // Check if pin exists
+            bool found = false;
+            for (auto& p : currentMacro->pins) {
+                if (p.name == currentPinName) { found = true; break; }
+            }
+            if (!found) {
+                PinDef pDef;
+                pDef.name = currentPinName;
+                currentMacro->pins.push_back(pDef);
+            }
             
         } else if (token == "DIRECTION" && currentPinName != "") {
             std::string dir;
             iss >> dir;
-            if (dir == "INPUT") currentMacro->pins[currentPinName].dir = PinType::INPUT;
-            else currentMacro->pins[currentPinName].dir = PinType::OUTPUT;
+            for (auto& p : currentMacro->pins) {
+                if (p.name == currentPinName) {
+                    p.isOutput = (dir == "OUTPUT");
+                    break;
+                }
+            }
             
         } else if (token == "RECT" && currentPinName != "") {
             double x1, y1, x2, y2;
             iss >> x1 >> y1 >> x2 >> y2;
             
             // Calculate the exact center offset of the pin's metal rectangle
-            currentMacro->pins[currentPinName].offsetX = (x1 + x2) / 2.0;
-            currentMacro->pins[currentPinName].offsetY = (y1 + y2) / 2.0;
+            for (auto& p : currentMacro->pins) {
+                if (p.name == currentPinName) {
+                    p.dx = (x1 + x2) / 2.0;
+                    p.dy = (y1 + y2) / 2.0;
+                    break;
+                }
+            }
             
         } else if (token == "END") {
             std::string endName;
@@ -67,5 +98,5 @@ void LefParser::parse(const std::string& filename, Design* design) {
             }
         }
     }
-    std::cout << "  [LEF] Library loaded successfully. Parsed geometry for " << design->library.size() << " macros.\n";
+    std::cout << "  [LEF] Library loaded successfully. Parsed geometry for macros/cells.\n";
 }

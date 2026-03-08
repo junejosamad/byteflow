@@ -47,17 +47,35 @@ double PlaceEngine::calculateCost() {
         if (timingPenalty < 0) timingPenalty = 0; // Don't let cost go negative
     }
 
-    return totalWireLength + timingPenalty;
+    // 3. Calculate Macro Overlap Penalty
+    double overlapPenalty = 0;
+    for (GateInstance* inst : design->instances) {
+        if (inst->isFixed) continue; // Only penalize standard cells
+        for (GateInstance* macro : design->instances) {
+            if (!macro->isFixed || !macro->type->isMacro) continue;
+            
+            // Check intersection area
+            double dx = std::max(0.0, std::min(inst->x + inst->type->width, macro->x + macro->type->width) - std::max(inst->x, macro->x));
+            double dy = std::max(0.0, std::min(inst->y + inst->type->height, macro->y + macro->type->height) - std::max(inst->y, macro->y));
+            if (dx > 0 && dy > 0) {
+                overlapPenalty += (dx * dy) * 10000.0; // Huge penalty for overlapping a macro
+            }
+        }
+    }
+
+    return totalWireLength + timingPenalty + overlapPenalty;
 }
 
 void PlaceEngine::runPlacement(Design& design, double coreWidth, double coreHeight) {
     std::cout << "\n=== GLOBAL PLACEMENT (Simulated Annealing) ===\n";
     std::cout << "  Mode: Timing-Driven\n";
 
-    // 1. Random Initial Placement
+    // 1. Random Initial Placement (Skip Fixed/Macros)
     for (GateInstance* inst : design.instances) {
-        inst->x = (double)(std::rand() % (int)coreWidth);
-        inst->y = (double)(std::rand() % (int)coreHeight);
+        if (!inst->isFixed) {
+            inst->x = (double)(std::rand() % (int)coreWidth);
+            inst->y = (double)(std::rand() % (int)coreHeight);
+        }
     }
 
     // Cost logic updated
@@ -75,11 +93,15 @@ void PlaceEngine::runPlacement(Design& design, double coreWidth, double coreHeig
     std::cout << "  Iterations: " << iterations << " (" << numCells << " cells)\n";
 
     for (int i = 0; i < iterations; ++i) {
-        // Pick random gates
+        // Pick random standard cells (skip fixed/macros)
         int idx1 = std::rand() % design.instances.size();
         int idx2 = std::rand() % design.instances.size();
         GateInstance* u = design.instances[idx1];
         GateInstance* v = design.instances[idx2];
+        if (u->isFixed || v->isFixed) {
+            // Keep going without changing iteration count or just accept this skip
+            continue;
+        }
 
         double ux_old = u->x, uy_old = u->y;
         double vx_old = v->x, vy_old = v->y;

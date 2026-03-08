@@ -14,16 +14,20 @@
 #include "cts/CtsEngine.h"
 #include "route/PdnGenerator.h"
 #include "export/GdsExporter.h"
+#include "place/Legalizer.h"
+#include "floorplan/Floorplanner.h"
+#include "analysis/SpefEngine.h"
 
 namespace py = pybind11;
 
-// Wrapper function to expose high-level placement to Python
 void run_placement(Design* chip) {
     if (!chip) return;
-    Timer physicsTimer(chip);
+    Timer physicsTimer(chip, chip->cellLibrary, nullptr);
     physicsTimer.buildGraph();
     PlaceEngine placer(chip, &physicsTimer);
     placer.runPlacement(*chip, chip->coreWidth, chip->coreHeight);
+    Legalizer leg(chip, chip->coreWidth, chip->coreHeight);
+    leg.run();
 }
 
 // Ensure the module name matches the target name in CMakeLists.txt (open_eda)
@@ -82,6 +86,7 @@ PYBIND11_MODULE(open_eda, m) {
 
             LefParser lefParser;
             lefParser.parse("benchmarks/open_eda.lef", &d);
+            lefParser.parse("benchmarks/sram.lef", &d);
 
             VerilogParser parser;
             bool success = parser.read(filename, d, lib);
@@ -129,4 +134,17 @@ PYBIND11_MODULE(open_eda, m) {
     m.def("export_gds", [](const std::string& filename, Design* design) {
         return GdsExporter::exportGds(filename, design);
     }, "Export design to GDSII binary file", py::arg("filename"), py::arg("design"));
+
+    // 8. Expose Floorplanner Class
+    py::class_<Floorplanner>(m, "Floorplanner")
+        .def(py::init<>())
+        .def("place_macros", &Floorplanner::placeMacros, "Place macro IPs");
+
+    // 9. Expose SpefEngine Class
+    py::class_<SpefEngine>(m, "SpefEngine")
+        .def(py::init<>())
+        .def("extract", &SpefEngine::extract, "Extract RC parasitics")
+        .def("write_spef", [](SpefEngine& spef, const std::string& filename, Design* chip) {
+            spef.writeSpef(filename, *chip);
+        }, "Write SPEF file");
 }

@@ -28,24 +28,7 @@ enum class PinType {
     INOUT
 };
 
-struct MacroPin {
-    std::string name;
-    std::string direction; // "INPUT" or "OUTPUT"
-    PinType dir = PinType::INPUT;
-    // Pin center offset from cell origin (from LEF RECT geometry)
-    double offsetX = 0.0;
-    double offsetY = 0.0;
-};
 
-struct Macro {
-    std::string name;
-    double width = 0.0;
-    double height = 0.0;
-    std::map<std::string, MacroPin> pins; // Keyed by pin name
-
-    Macro() = default;
-    Macro(const std::string& n) : name(n) {}
-};
 
 
 // A Pin is where a Wire meets a Gate
@@ -122,7 +105,6 @@ public:
     std::vector<GateInstance*> instances;
     std::vector<Net*> nets;
     std::unordered_map<std::string, Net*> netMap;
-    std::map<std::string, Macro*> library; // Map of macro name to Macro definition
     Library* cellLibrary = nullptr; // Reference to the loaded std cell definitions
 
     double coreWidth = 0.0;

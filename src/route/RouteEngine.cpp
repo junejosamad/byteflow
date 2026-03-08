@@ -44,7 +44,7 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
     double scaleX = 1.0;
     double scaleY = 1.0;
     int maxIter = 30;
-    int gridL = 4;   // Layers 0, 1, 2, 3
+    int gridL = 6;   // Layers 0, 1, 2, 3, 4, 5 (M1 through M6)
     int totalNodes = gridW * gridH * gridL;
     std::cout << "  Grid: " << gridW << " x " << gridH << " x " << gridL 
               << " (" << totalNodes << " nodes)"
@@ -79,6 +79,29 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 if (gx >= 0 && gx < gridW && gy >= 0 && gy < gridH && pt.layer >= 1 && pt.layer < gridL) {
                     // Reduce penalty factor significantly. It's a hindrance, but not a solid wall since we can drop vias around it
                     obstacles[getIdx(gx, gy, pt.layer, gridH, gridL)] += 2; 
+                }
+            }
+        }
+    }
+
+    // Add Macro Routing Blockages (Infinite cost up to Metal3)
+    for (GateInstance* inst : design.instances) {
+        if (inst->isFixed && inst->type && inst->type->isMacro) {
+            int mx1 = std::max(0, (int)(inst->x / scaleX));
+            int my1 = std::max(0, (int)(inst->y / scaleY));
+            int mx2 = std::min(gridW - 1, (int)((inst->x + inst->type->width) / scaleX));
+            int my2 = std::min(gridH - 1, (int)((inst->y + inst->type->height) / scaleY));
+            
+            // Block routing on layer 0, 1, 2 (M1, M2, M3)
+            for (int l = 0; l < 3 && l < gridL; ++l) {
+                for (int x = mx1; x <= mx2; ++x) {
+                    for (int y = my1; y <= my2; ++y) {
+                        int idx = getIdx(x, y, l, gridH, gridL);
+                        // Do not block if it's an actual pin
+                        if (pinOwner[idx] == nullptr) {
+                            obstacles[idx] = 99999;
+                        }
+                    }
                 }
             }
         }
@@ -313,8 +336,8 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     bbMaxY = std::max(bbMaxY, py);
                 }
                 
-                // Allow the router to swing wiiide around PDN via meshes
-                int margin = 100 + (iter * 50); 
+                // Allow the router to swing wiiide around PDN via meshes (massively expanded for macro avoidance)
+                int margin = 200 + (iter * 100); 
                 bbMinX = std::max(1, bbMinX - margin);
                 bbMaxX = std::min(gridW - 2, bbMaxX + margin);
                 bbMinY = std::max(1, bbMinY - margin);
@@ -356,13 +379,13 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                             } else if (nl == 1) {
                                 // LAYER 1 (M1): Very expensive local driveway
                                 stepCost = 15.0; 
-                            } else if (nl == 2) {
-                                // LAYER 2 (M2): Vertical Highway
+                            } else if (nl == 2 || nl == 4) {
+                                // LAYER 2, 4 (M2, M4): Vertical Highways
                                 // If moving horizontally (dx != 0), apply a penalty
                                 if (dx[d] != 0) stepCost = 5.0;
                                 else stepCost = 1.0; 
-                            } else if (nl == 3) {
-                                // LAYER 3 (M3): Horizontal Highway
+                            } else if (nl == 3 || nl == 5) {
+                                // LAYER 3, 5 (M3, M5): Horizontal Highways
                                 // If moving vertically (dy != 0), apply a penalty
                                 if (dy[d] != 0) stepCost = 5.0;
                                 else stepCost = 1.0; 
