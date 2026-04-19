@@ -1,21 +1,23 @@
+#pragma once
 #include "db/Design.h"
-#include "timer/Timer.h" // <--- Include Timer
+#include "timer/Timer.h"
 #include <vector>
 #include <cstdlib>
 #include <cmath>
 
 class PlaceEngine {
 public:
-    // Update constructor to take Timer*
     PlaceEngine(Design* design, Timer* timer);
-    
-    // Main function: Places gates within the given core boundary (W x H)
+
+    // Routes to SA or AnalyticalPlacer depending on design size
     void runPlacement(Design& design, double coreWidth, double coreHeight);
 
 private:
     Design* design;
-    Timer* timer;
-    int timingCounter = 0;
-    
+    Timer*  timer;
+    int     timingCounter = 0;
+
+    // Simulated Annealing (small designs < AnalyticalPlacer::SA_THRESHOLD)
+    void runSA(Design& design, double coreWidth, double coreHeight);
     double calculateCost();
 };

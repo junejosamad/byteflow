@@ -1,5 +1,6 @@
 #include "CtsEngine.h"
 #include "db/Design.h"
+#include "util/Logger.h"
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,8 @@ bool CtsEngine::runCTS(Design* design, const std::string& clockNetName) {
     }
 
     if (!clkNet) {
-        std::cout << "[CTS] Error: Clock net '" << clockNetName << "' not found.\n";
+        Logger::info(Logger::fmt() << "CTS: no clock net '" << clockNetName
+                     << "' found — skipping (combinational design)");
         return false;
     }
 

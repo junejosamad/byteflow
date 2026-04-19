@@ -4,82 +4,110 @@
 #include "analysis/SpefEngine.h"
 #include <vector>
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <limits>
+#include <functional>
 
 // ============================================================
-// PHASE 5: Enhanced Timing Node with Slew Tracking
+// Timing node: one per Pin in the netlist timing graph
 // ============================================================
 struct TimingNode {
-    Pin* pin;              // Pointer to the actual Pin in OpenDB
-    double arrivalTime;    // AT: When the signal gets here (from Start)
-    double requiredTime;   // RAT: When the signal MUST get here (from End)
-    double slack;          // Slack = RAT - AT
-    double slew;           // Signal transition time at this node (ps)
+    Pin* pin;
+    double arrivalTime;
+    double requiredTime;
+    double slack;
+    double slew;          // signal transition time (ps)
+    double gateDelay;     // cell delay on this arc (ps)
+    double wireDelay;     // net RC delay on this arc (ps)
 
-    // Per-arc delay breakdown (for critical path reporting)
-    double gateDelay = 0.0;   // Cell delay contribution
-    double wireDelay = 0.0;   // Wire delay contribution
+    std::vector<TimingNode*> children;
+    std::vector<TimingNode*> parents;
 
-    // Graph Connectivity
-    std::vector<TimingNode*> children; // Outgoing edges (Next pins)
-    std::vector<TimingNode*> parents;  // Incoming edges (Previous pins)
-
-    TimingNode(Pin* p) : pin(p), arrivalTime(0),
-        requiredTime(std::numeric_limits<double>::infinity()),
-        slack(0), slew(20.0) {} // Default 20ps input slew
+    TimingNode(Pin* p)
+        : pin(p),
+          arrivalTime(0.0),
+          requiredTime(std::numeric_limits<double>::infinity()),
+          slack(0.0),
+          slew(20.0),
+          gateDelay(0.0),
+          wireDelay(0.0) {}
 };
 
+// ============================================================
+// Summary returned after updateTiming()
+// ============================================================
+struct TimingSummary {
+    double wns          = 0.0;   // Worst Negative Slack (ps)
+    double tns          = 0.0;   // Total Negative Slack (ps)
+    int    violations   = 0;     // Number of endpoint violations
+    int    endpoints    = 0;     // Total timing endpoints checked
+    double criticalPath = 0.0;   // Longest arrival time (ps)
+};
+
+// ============================================================
+// Timer: full STA with NLDM, Elmore RC, topo-sorted passes
+// ============================================================
 class Timer {
 public:
-    // PHASE 5: Enhanced constructor with Library and SpefEngine
     Timer(Design* design, Library* lib = nullptr, SpefEngine* spef = nullptr);
     ~Timer();
 
-    // Helper for Placer
-    double getMinSlack() const {
-        double minSlack = std::numeric_limits<double>::infinity();
-        for (auto node : nodes) {
-            if (node->slack < minSlack) minSlack = node->slack;
-        }
-        return minSlack;
-    }
+    // --- Configuration ---
+    void setClockPeriod(double period) { clockPeriod = period; }
+    void setInputDelay(double delay)   { inputDelay  = delay;  }
+    void setOutputDelay(double delay)  { outputDelay = delay;  }
 
-    // 1. Build the Graph from the Netlist
+    // --- Core flow ---
     void buildGraph();
-
-    // 2. The Core STA Loop
     void updateTiming();
 
-    // 3. Reporting
-    void reportCriticalPath();
+    // --- Results ---
+    TimingSummary getSummary() const;
+    double getWNS()            const;
+    double getTNS()            const;
+    int    getViolationCount() const;
 
-    // Set clock period for constraint checking (default 1000ps = 1GHz)
-    void setClockPeriod(double period) { clockPeriod = period; }
+    // Used by PlaceEngine to score timing quality during SA
+    double getMinSlack() const { return getWNS(); }
+
+    // --- Reports ---
+    void reportCriticalPath() const;
+    void reportAllEndpoints() const;
 
 private:
-    Design* design;
-    Library* library;        // PHASE 5: For NLDM lookups
-    SpefEngine* spefEngine;  // PHASE 5: For Elmore wire delays
-    double clockPeriod = 1000.0; // ps
+    Design*     design;
+    Library*    library;
+    SpefEngine* spefEngine;
 
-    std::vector<TimingNode*> nodes;
-    std::map<Pin*, TimingNode*> pinToNodeMap; // Fast lookup
+    double clockPeriod = 1000.0;  // ps  (1 GHz default)
+    double inputDelay  =    0.0;  // ps  (primary input arrival offset)
+    double outputDelay =    0.0;  // ps  (primary output budget reduction)
 
-    // Internal Steps
-    void propagateArrivalTimes();  // Forward Pass
-    void propagateRequiredTimes(); // Backward Pass
-    void calculateSlack();         // Final Check
+    std::vector<TimingNode*>           nodes;
+    std::unordered_map<Pin*, TimingNode*> pinToNode;
+    std::vector<TimingNode*>           topoOrder;  // source → sink order
 
-    // PHASE 5: Enhanced Physics
+    // --- Internal passes ---
+    void computeTopologicalOrder();
+    void propagateArrivalTimes();
+    void propagateRequiredTimes();
+    void calculateSlack();
+
+    bool isEndpoint(const TimingNode* n) const;
+    double getSetupTime(const GateInstance* inst) const;
+    double getHoldTime (const GateInstance* inst) const;
+
+    // --- Physics helpers ---
     double getNldmDelay(GateInstance* inst, const std::string& fromPin,
-                        const std::string& toPin, double inputSlew, double outputCap);
+                        const std::string& toPin,
+                        double inputSlew, double outputCap) const;
     double getOutputSlew(GateInstance* inst, const std::string& fromPin,
-                         const std::string& toPin, double inputSlew, double outputCap);
-    double getElmoreDelay(Net* net);
-    double getNetCapacitance(Net* net);
-
-    // Legacy fallback
-    double getGateDelay(GateInstance* inst);
-    double getWireDelay(Net* net);
+                         const std::string& toPin,
+                         double inputSlew, double outputCap) const;
+    double getElmoreDelay(Net* net)      const;
+    double getNetCapacitance(Net* net)   const;
+    double getGateDelay(GateInstance*)   const;
+    double getWireDelay(Net* net)        const;
 };

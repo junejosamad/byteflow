@@ -147,4 +147,45 @@ PYBIND11_MODULE(open_eda, m) {
         .def("write_spef", [](SpefEngine& spef, const std::string& filename, Design* chip) {
             spef.writeSpef(filename, *chip);
         }, "Write SPEF file");
+
+    // 10. Expose TimingSummary struct
+    py::class_<TimingSummary>(m, "TimingSummary")
+        .def_readonly("wns",           &TimingSummary::wns)
+        .def_readonly("tns",           &TimingSummary::tns)
+        .def_readonly("violations",    &TimingSummary::violations)
+        .def_readonly("endpoints",     &TimingSummary::endpoints)
+        .def_readonly("critical_path", &TimingSummary::criticalPath);
+
+    // 11. Expose Timer (sign-off STA engine)
+    py::class_<Timer>(m, "Timer")
+        // Primary constructor: design only (library/spef resolved internally)
+        .def(py::init([](Design* d) {
+            return new Timer(d, d->cellLibrary, nullptr);
+        }), py::arg("design"))
+        // Full constructor: design + spef (for post-route sign-off)
+        .def(py::init([](Design* d, SpefEngine* spef) {
+            return new Timer(d, d->cellLibrary, spef);
+        }), py::arg("design"), py::arg("spef"))
+        .def("build_graph",         &Timer::buildGraph,
+             "Build the timing graph from the current netlist")
+        .def("update_timing",       &Timer::updateTiming,
+             "Run forward + backward passes, compute slack")
+        .def("set_clock_period",    &Timer::setClockPeriod,
+             "Set clock period in picoseconds", py::arg("period_ps"))
+        .def("set_input_delay",     &Timer::setInputDelay,
+             "Set primary-input arrival offset (ps)", py::arg("delay_ps"))
+        .def("set_output_delay",    &Timer::setOutputDelay,
+             "Set primary-output budget reduction (ps)", py::arg("delay_ps"))
+        .def("get_wns",             &Timer::getWNS,
+             "Worst Negative Slack across all endpoints (ps)")
+        .def("get_tns",             &Timer::getTNS,
+             "Total Negative Slack — sum of all violations (ps)")
+        .def("get_violation_count", &Timer::getViolationCount,
+             "Number of endpoints with negative slack")
+        .def("get_summary",         &Timer::getSummary,
+             "Return a TimingSummary with WNS, TNS, violation count")
+        .def("report_critical_path",&Timer::reportCriticalPath,
+             "Print the critical path breakdown to stdout")
+        .def("report_all_endpoints",&Timer::reportAllEndpoints,
+             "Print slack for every timing endpoint");
 }

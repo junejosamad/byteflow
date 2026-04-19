@@ -1,4 +1,6 @@
 #include "place/PlaceEngine.h"
+#include "place/AnalyticalPlacer.h"
+#include "util/Logger.h"
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -67,6 +69,24 @@ double PlaceEngine::calculateCost() {
 }
 
 void PlaceEngine::runPlacement(Design& design, double coreWidth, double coreHeight) {
+    int movableCount = 0;
+    for (auto* inst : design.instances)
+        if (!inst->isFixed) movableCount++;
+
+    if (movableCount >= AnalyticalPlacer::SA_THRESHOLD) {
+        Logger::info(Logger::fmt()
+            << "Placement: using AnalyticalPlacer ("
+            << movableCount << " cells >= threshold "
+            << AnalyticalPlacer::SA_THRESHOLD << ")");
+        AnalyticalPlacer ap(&design, timer);
+        ap.run(coreWidth, coreHeight);
+        return;
+    }
+
+    runSA(design, coreWidth, coreHeight);
+}
+
+void PlaceEngine::runSA(Design& design, double coreWidth, double coreHeight) {
     std::cout << "\n=== GLOBAL PLACEMENT (Simulated Annealing) ===\n";
     std::cout << "  Mode: Timing-Driven\n";
 

@@ -1,7 +1,8 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
-#include <ctime>  // Needed for random seed
+#include <ctime>
+#include "util/Logger.h"
 #include "db/Design.h"
 #include "db/Library.h"
 #include "parser/VerilogParser.h"
@@ -209,17 +210,20 @@ int main(int argc, char* argv[]) {
         std::string spefName = filename.substr(0, filename.find_last_of(".")) + ".spef";
         spef.writeSpef(spefName, chip);
 
-        // 11. FINAL SIGN-OFF STA (with NLDM + Elmore Physics)
-        std::cout << "\n--- Final Sign-off STA (Phase 5: NLDM + Elmore) ---\n";
+        // 11. FINAL SIGN-OFF STA (NLDM + Elmore + WNS/TNS)
+        Logger::info("Running sign-off STA (NLDM + Elmore)...");
         Timer finalTimer(&chip, &lib, &spef);
         finalTimer.buildGraph();
         finalTimer.setClockPeriod(1000.0); // 1 GHz target
         finalTimer.updateTiming();
         finalTimer.reportCriticalPath();
+        finalTimer.reportAllEndpoints();
 
-        // Legacy STA report (for comparison)
-        timer.updateTiming(chip);
-        timer.reportTiming(chip);
+        auto summary = finalTimer.getSummary();
+        Logger::info(Logger::fmt() << "STA complete — WNS=" << summary.wns
+                     << "ps  TNS=" << summary.tns
+                     << "ps  Violations=" << summary.violations
+                     << "/" << summary.endpoints);
 
         // Level 3: Power Analysis
         power.reportPower(chip, 1.0, 1000.0);
