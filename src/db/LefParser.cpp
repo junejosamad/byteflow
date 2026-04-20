@@ -7,96 +7,134 @@ void LefParser::parse(const std::string& filename, Design* design) {
     std::cout << "  [LEF] Loading physical library " << filename << "...\n";
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "  Error: Could not open LEF file.\n";
+        std::cerr << "  [LEF] Error: Could not open " << filename << "\n";
         return;
     }
 
     std::string line;
-    CellDef* currentMacro = nullptr;
+    CellDef*    currentMacro   = nullptr;
     std::string currentPinName = "";
+    bool        skipPin        = false; // true for POWER/GROUND pins
+    double      dbUnits        = 1.0;  // DATABASE MICRONS scale
 
     while (std::getline(file, line)) {
         std::istringstream iss(line);
         std::string token;
-        
-        // Skip empty lines
         if (!(iss >> token)) continue;
 
+        // Comments
+        if (token[0] == '#') continue;
+
+        // ── Units ─────────────────────────────────────────────────────────────
+        if (token == "DATABASE") {
+            std::string sub;
+            iss >> sub; // "MICRONS"
+            double val = 1.0;
+            if (iss >> val) dbUnits = val;
+            continue;
+        }
+
+        // ── Macro (cell) definition ───────────────────────────────────────────
         if (token == "MACRO") {
             std::string macroName;
             iss >> macroName;
-            
-            // If Liberty parser hasn't created it yet, create it. Otherwise, fetch it.
-            if (design->cellLibrary) {
-                currentMacro = design->cellLibrary->getCell(macroName);
-                if (!currentMacro) {
-                    currentMacro = new CellDef();
-                    currentMacro->name = macroName;
-                    design->cellLibrary->addCell(currentMacro);
-                }
-                // we'll determine if it's a true macro by its size
+            if (!design->cellLibrary) continue;
+            currentMacro = design->cellLibrary->getCell(macroName);
+            if (!currentMacro) {
+                currentMacro = new CellDef();
+                currentMacro->name = macroName;
+                design->cellLibrary->addCell(currentMacro);
             }
-            
-        } else if (token == "SIZE" && currentMacro) {
+            currentPinName = "";
+            skipPin        = false;
+            continue;
+        }
+
+        if (!currentMacro) continue;
+
+        // ── Size ──────────────────────────────────────────────────────────────
+        if (token == "SIZE") {
             double w, h;
             std::string by;
-            iss >> w >> by >> h;
-            currentMacro->width = w;
-            currentMacro->height = h;
-            
-            // Standard cells are small (e.g. 1x1, 4x2). Real SoC Macros (SRAM) are large.
-            if (w > 10.0 || h > 10.0) {
-                currentMacro->isMacro = true;
-            } else {
-                currentMacro->isMacro = false;
+            if (iss >> w >> by >> h) {
+                currentMacro->width  = w;
+                currentMacro->height = h;
+                // Sky130 standard cells are <= 2.72µm tall; macros are much larger
+                currentMacro->isMacro = (w > 10.0 || h > 10.0);
             }
-            
-        } else if (token == "PIN" && currentMacro) {
+            continue;
+        }
+
+        // ── Pin definition ────────────────────────────────────────────────────
+        if (token == "PIN") {
             iss >> currentPinName;
-            
-            // Check if pin exists
+            skipPin = false;
+            // Don't add pin to cell yet; wait for USE directive to filter PG pins
             bool found = false;
-            for (auto& p : currentMacro->pins) {
+            for (auto& p : currentMacro->pins)
                 if (p.name == currentPinName) { found = true; break; }
-            }
             if (!found) {
                 PinDef pDef;
                 pDef.name = currentPinName;
                 currentMacro->pins.push_back(pDef);
             }
-            
-        } else if (token == "DIRECTION" && currentPinName != "") {
+            continue;
+        }
+
+        // ── Use (SIGNAL / POWER / GROUND) ─────────────────────────────────────
+        if (token == "USE" && !currentPinName.empty()) {
+            std::string useType;
+            iss >> useType;
+            if (useType == "POWER" || useType == "GROUND") {
+                // Remove this pin from the cell — it's a power/ground rail, not signal
+                skipPin = true;
+                auto& pins = currentMacro->pins;
+                pins.erase(std::remove_if(pins.begin(), pins.end(),
+                    [&](const PinDef& p){ return p.name == currentPinName; }),
+                    pins.end());
+            }
+            continue;
+        }
+
+        // ── Direction ─────────────────────────────────────────────────────────
+        if (token == "DIRECTION" && !currentPinName.empty() && !skipPin) {
             std::string dir;
             iss >> dir;
-            for (auto& p : currentMacro->pins) {
-                if (p.name == currentPinName) {
-                    p.isOutput = (dir == "OUTPUT");
-                    break;
-                }
-            }
-            
-        } else if (token == "RECT" && currentPinName != "") {
+            for (auto& p : currentMacro->pins)
+                if (p.name == currentPinName) { p.isOutput = (dir == "OUTPUT"); break; }
+            continue;
+        }
+
+        // ── Rect (pin geometry) ───────────────────────────────────────────────
+        if (token == "RECT" && !currentPinName.empty() && !skipPin) {
             double x1, y1, x2, y2;
-            iss >> x1 >> y1 >> x2 >> y2;
-            
-            // Calculate the exact center offset of the pin's metal rectangle
-            for (auto& p : currentMacro->pins) {
-                if (p.name == currentPinName) {
-                    p.dx = (x1 + x2) / 2.0;
-                    p.dy = (y1 + y2) / 2.0;
-                    break;
-                }
+            if (iss >> x1 >> y1 >> x2 >> y2) {
+                // Use centre of first RECT encountered (subsequent RECTs override — last wins)
+                for (auto& p : currentMacro->pins)
+                    if (p.name == currentPinName) {
+                        p.dx = (x1 + x2) / 2.0;
+                        p.dy = (y1 + y2) / 2.0;
+                        break;
+                    }
             }
-            
-        } else if (token == "END") {
+            continue;
+        }
+
+        // ── End ───────────────────────────────────────────────────────────────
+        if (token == "END") {
             std::string endName;
             iss >> endName;
             if (currentMacro && endName == currentMacro->name) {
-                currentMacro = nullptr; // Exit Macro block
+                currentMacro   = nullptr;
+                currentPinName = "";
+                skipPin        = false;
             } else if (endName == currentPinName) {
-                currentPinName = "";    // Exit Pin block
+                currentPinName = "";
+                skipPin        = false;
             }
+            continue;
         }
     }
+
     std::cout << "  [LEF] Library loaded successfully. Parsed geometry for macros/cells.\n";
 }

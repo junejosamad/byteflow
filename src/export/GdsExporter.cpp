@@ -97,10 +97,10 @@ void GdsExporter::writeNoData(std::ofstream& out, uint16_t recordType) {
 //  GEOMETRY WRITERS
 // ========================================================================
 
-void GdsExporter::writePolygon(std::ofstream& out, int layer, const std::vector<std::pair<int32_t, int32_t>>& points) {
+void GdsExporter::writePolygon(std::ofstream& out, int layer, const std::vector<std::pair<int32_t, int32_t>>& points, int datatype) {
     writeNoData(out, BOUNDARY);
     writeI2(out, LAYER, (int16_t)layer);
-    writeI2(out, DATATYPE, 0);
+    writeI2(out, DATATYPE, (int16_t)datatype);
     
     // XY record: header(4) + (num_points * 8 bytes for two I4s)
     uint16_t xySize = (uint16_t)(4 + (points.size() * 8));
@@ -127,10 +127,10 @@ void GdsExporter::writeWireRect(std::ofstream& out, int layer, int32_t x1, int32
         {maxX, minY},
         {maxX, maxY},
         {minX, maxY},
-        {minX, minY} // GDSII Boundaries must close the loop!
+        {minX, minY}
     };
-    
-    writePolygon(out, layer, boundary);
+
+    writePolygon(out, layer, boundary, 20); // sky130: metal routing shapes use datatype 20
 }
 
 void GdsExporter::writeSRef(std::ofstream& out, const std::string& structName, int32_t x, int32_t y) {
@@ -152,22 +152,27 @@ void GdsExporter::writeSRef(std::ofstream& out, const std::string& structName, i
 // ========================================================================
 
 int GdsExporter::mapLayerToGds(int routerLayer) {
+    // sky130 layer stack: li1(67) met1(68) met2(69) met3(70) met4(71) met5(72)
     switch (routerLayer) {
-        case 1: return GDS_M1;
-        case 2: return GDS_M2;
-        case 3: return GDS_M3;
-        case 4: return GDS_M4;
-        default: return GDS_M1;
+        case 1:  return GDS_LI1;
+        case 2:  return GDS_M1;
+        case 3:  return GDS_M2;
+        case 4:  return GDS_M3;
+        case 5:  return GDS_M4;
+        case 6:  return GDS_M5;
+        default: return GDS_LI1;
     }
 }
 
 int GdsExporter::mapViaToGds(int fromLayer, int toLayer) {
     int lo = std::min(fromLayer, toLayer);
     int hi = std::max(fromLayer, toLayer);
-    if (lo == 1 && hi == 2) return GDS_VIA12;
-    if (lo == 2 && hi == 3) return GDS_VIA23;
-    if (lo == 3 && hi == 4) return GDS_VIA34;
-    return GDS_VIA12; // fallback
+    if (lo == 1 && hi == 2) return GDS_VIA12; // mcon  (li1→met1)
+    if (lo == 2 && hi == 3) return GDS_VIA23; // via   (met1→met2)
+    if (lo == 3 && hi == 4) return GDS_VIA34; // via2  (met2→met3)
+    if (lo == 4 && hi == 5) return GDS_VIA45; // via3  (met3→met4)
+    if (lo == 5 && hi == 6) return GDS_VIA56; // via4  (met4→met5)
+    return GDS_VIA12;
 }
 
 // ========================================================================
@@ -311,12 +316,12 @@ bool GdsExporter::exportGds(const std::string& filename, Design* design) {
                     {x2 - VIA_SIZE, y2 + VIA_SIZE},
                     {x2 - VIA_SIZE, y2 - VIA_SIZE}
                 };
-                writePolygon(out, viaLayer, viaPoly);
+                writePolygon(out, viaLayer, viaPoly, 44); // sky130: via cuts use datatype 44
                 viaCount++;
                 continue;
             }
-            
-            // Same layer = Wire rectangle
+
+            // Same layer = Wire rectangle (sky130: metal shapes use datatype 20)
             int gdsLayer = mapLayerToGds(p1.layer);
             writeWireRect(out, gdsLayer, x1, y1, x2, y2, HALF_WIDTH);
             

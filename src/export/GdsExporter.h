@@ -32,16 +32,23 @@ private:
     static const uint16_t XY        = 0x1003;
     static const uint16_t ENDEL     = 0x1100;
 
-    // ========= GDS Layer Mapping =========
-    static const int GDS_CELL    = 10;   // Cell bounding box outlines
-    static const int GDS_PIN     = 11;   // Pin access rectangles
-    static const int GDS_M1      = 68;   // Metal 1 (local interconnect)
-    static const int GDS_M2      = 69;   // Metal 2 (vertical highway)
-    static const int GDS_M3      = 70;   // Metal 3 (horizontal PDN stripes)
-    static const int GDS_M4      = 71;   // Metal 4 (vertical PDN stripes)
-    static const int GDS_VIA12   = 50;   // Via between M1 and M2
-    static const int GDS_VIA23   = 51;   // Via between M2 and M3
-    static const int GDS_VIA34   = 52;   // Via between M3 and M4
+    // ========= GDS Layer Mapping (sky130 standard) =========
+    // Router abstract layer → sky130 GDS layer number
+    // sky130 stack:  li1(67) / met1(68) / met2(69) / met3(70) / met4(71) / met5(72)
+    // Cut layers share GDS number with the metal above, datatype 44
+    static const int GDS_CELL    = 10;   // Cell bounding box outlines (internal)
+    static const int GDS_PIN     = 11;   // Pin access rectangles     (internal)
+    static const int GDS_LI1     = 67;   // sky130 li1  — router layer 1
+    static const int GDS_M1      = 68;   // sky130 met1 — router layer 2
+    static const int GDS_M2      = 69;   // sky130 met2 — router layer 3
+    static const int GDS_M3      = 70;   // sky130 met3 — router layer 4
+    static const int GDS_M4      = 71;   // sky130 met4 — router layer 5
+    static const int GDS_M5      = 72;   // sky130 met5 — router layer 6
+    static const int GDS_VIA12   = 67;   // sky130 mcon  (li1→met1,  datatype 44)
+    static const int GDS_VIA23   = 68;   // sky130 via   (met1→met2, datatype 44)
+    static const int GDS_VIA34   = 69;   // sky130 via2  (met2→met3, datatype 44)
+    static const int GDS_VIA45   = 70;   // sky130 via3  (met3→met4, datatype 44)
+    static const int GDS_VIA56   = 71;   // sky130 via4  (met4→met5, datatype 44)
 
     // ========= Big-Endian Byte Swappers =========
     static uint16_t swap16(uint16_t val);
@@ -59,7 +66,7 @@ private:
     static void writeNoData(std::ofstream& out, uint16_t recordType);
     
     // ========= Geometry Writers =========
-    static void writePolygon(std::ofstream& out, int layer, const std::vector<std::pair<int32_t, int32_t>>& points);
+    static void writePolygon(std::ofstream& out, int layer, const std::vector<std::pair<int32_t, int32_t>>& points, int datatype = 0);
     static void writeWireRect(std::ofstream& out, int layer, int32_t x1, int32_t y1, int32_t x2, int32_t y2, int half_width);
     static void writeSRef(std::ofstream& out, const std::string& structName, int32_t x, int32_t y);
     

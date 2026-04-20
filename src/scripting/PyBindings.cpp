@@ -40,62 +40,84 @@ PYBIND11_MODULE(open_eda, m) {
         .def("get_instance_count", [](const Design& d) {
             return d.instances.size();
         })
-        .def("load_verilog", [](Design& d, const std::string& filename) {
-            // CRITICAL FIX: Library must outlive this lambda, so we allocate it statically or on the heap
-            static Library lib;
-            d.cellLibrary = &lib; // NEW: Give Design access to fetch CLKBUF standard cell later
-            // Provide dummy base cells just like main.cpp
-            auto createCell = [&](std::string name, double delay, bool isSeq) {
-                CellDef* c = new CellDef();
-                c->name = name; c->delay = delay; c->isSequential = isSeq;
-                c->width = 1.0; c->height = 1.0;
-                c->leakagePower = 10.0;
-                return c;
-            };
-
-            CellDef* xor2 = createCell("XOR2", 2.5, false); xor2->width = 3.0;
-            xor2->pins = {{"A", false, 0.004, -1.0, 0.0}, {"B", false, 0.004, 1.0, 0.0}, {"Y", true, 0.0, 0.0, 0.0}};
-            lib.addCell(xor2);
-
-            CellDef* and2 = createCell("AND2", 1.8, false); and2->width = 2.0;
-            and2->pins = {{"A", false, 0.004, -1.0, 0.0}, {"B", false, 0.004, 1.0, 0.0}, {"Y", true, 0.0, 0.0, 0.0}};
-            lib.addCell(and2);
-
-            CellDef* or2 = createCell("OR2", 1.8, false); or2->width = 2.0;
-            or2->pins = {{"A", false, 0.004, -1.0, 0.0}, {"B", false, 0.004, 1.0, 0.0}, {"Y", true, 0.0, 0.0, 0.0}};
-            lib.addCell(or2);
-
-            CellDef* dff = createCell("DFF", 1.0, true); dff->width = 4.0; dff->height = 2.0; dff->leakagePower = 50.0;
-            dff->pins = {{"C", false, 0.004, -1.0, -1.0}, {"D", false, 0.004, -1.0, 1.0}, {"Q", true, 0.0, 1.0, 0.0}};
-            lib.addCell(dff);
-
-            CellDef* buf1 = createCell("BUF", 0.5, false); buf1->width = 1.0;
-            buf1->pins = {{"A", false, 0.004, -0.5, 0.0}, {"Y", true, 0.0, 0.5, 0.0}};
-            lib.addCell(buf1);
-
-            CellDef* notGate = createCell("NOT", 0.3, false); notGate->width = 1.0;
-            notGate->pins = {{"A", false, 0.004, -0.5, 0.0}, {"Y", true, 0.0, 0.5, 0.0}};
-            lib.addCell(notGate);
-
-            CellDef* clkbuf = createCell("CLKBUF", 0.2, false); clkbuf->width = 2.0; clkbuf->height = 2.0; clkbuf->leakagePower = 100.0;
-            clkbuf->pins = {{"A", false, 0.010, -1.0, 0.0}, {"Y", true, 0.0, 1.0, 0.0}};
-            lib.addCell(clkbuf);
+        // load_pdk: load a custom Liberty + LEF pair before calling load_verilog.
+        // When a PDK is pre-loaded, load_verilog skips the hardcoded benchmarks/ library.
+        .def("load_pdk", [](Design& d,
+                             const std::string& libertyPath,
+                             const std::string& lefPath) {
+            // Allocate a persistent library on the heap
+            Library* lib = new Library();
+            d.cellLibrary = lib;
 
             LibertyParser libParser;
-            libParser.parse("benchmarks/simple.lib", lib);
+            libParser.parse(libertyPath, *lib);
 
             LefParser lefParser;
-            lefParser.parse("benchmarks/open_eda.lef", &d);
-            lefParser.parse("benchmarks/sram.lef", &d);
+            lefParser.parse(lefPath, &d);
 
+            py::print("[PDK] Loaded", (int)lib->cells.size(), "cells from", libertyPath);
+        })
+        .def("load_verilog", [](Design& d, const std::string& filename) {
+            // If load_pdk() was already called, cellLibrary is non-null and populated.
+            // In that case skip the default benchmarks/ library to avoid overwriting.
+            bool pdkPreloaded = (d.cellLibrary != nullptr && !d.cellLibrary->cells.empty());
+
+            static Library defaultLib;
+            if (!pdkPreloaded) {
+                d.cellLibrary = &defaultLib;
+
+                auto createCell = [&](std::string name, double delay, bool isSeq) {
+                    CellDef* c = new CellDef();
+                    c->name = name; c->delay = delay; c->isSequential = isSeq;
+                    c->width = 1.0; c->height = 1.0; c->leakagePower = 10.0;
+                    return c;
+                };
+
+                CellDef* xor2 = createCell("XOR2", 2.5, false); xor2->width = 3.0;
+                xor2->pins = {{"A", false, 0.004, -1.0, 0.0}, {"B", false, 0.004, 1.0, 0.0}, {"Y", true, 0.0, 0.0, 0.0}};
+                defaultLib.addCell(xor2);
+
+                CellDef* and2 = createCell("AND2", 1.8, false); and2->width = 2.0;
+                and2->pins = {{"A", false, 0.004, -1.0, 0.0}, {"B", false, 0.004, 1.0, 0.0}, {"Y", true, 0.0, 0.0, 0.0}};
+                defaultLib.addCell(and2);
+
+                CellDef* or2 = createCell("OR2", 1.8, false); or2->width = 2.0;
+                or2->pins = {{"A", false, 0.004, -1.0, 0.0}, {"B", false, 0.004, 1.0, 0.0}, {"Y", true, 0.0, 0.0, 0.0}};
+                defaultLib.addCell(or2);
+
+                CellDef* dff = createCell("DFF", 1.0, true); dff->width = 4.0; dff->height = 2.0; dff->leakagePower = 50.0;
+                dff->pins = {{"C", false, 0.004, -1.0, -1.0}, {"D", false, 0.004, -1.0, 1.0}, {"Q", true, 0.0, 1.0, 0.0}};
+                defaultLib.addCell(dff);
+
+                CellDef* buf1 = createCell("BUF", 0.5, false); buf1->width = 1.0;
+                buf1->pins = {{"A", false, 0.004, -0.5, 0.0}, {"Y", true, 0.0, 0.5, 0.0}};
+                defaultLib.addCell(buf1);
+
+                CellDef* notGate = createCell("NOT", 0.3, false); notGate->width = 1.0;
+                notGate->pins = {{"A", false, 0.004, -0.5, 0.0}, {"Y", true, 0.0, 0.5, 0.0}};
+                defaultLib.addCell(notGate);
+
+                CellDef* clkbuf = createCell("CLKBUF", 0.2, false); clkbuf->width = 2.0; clkbuf->height = 2.0; clkbuf->leakagePower = 100.0;
+                clkbuf->pins = {{"A", false, 0.010, -1.0, 0.0}, {"Y", true, 0.0, 1.0, 0.0}};
+                defaultLib.addCell(clkbuf);
+
+                LibertyParser libParser;
+                libParser.parse("benchmarks/simple.lib", defaultLib);
+
+                LefParser lefParser;
+                lefParser.parse("benchmarks/open_eda.lef", &d);
+                lefParser.parse("benchmarks/sram.lef", &d);
+            }
+
+            Library& lib = *d.cellLibrary;
             VerilogParser parser;
             bool success = parser.read(filename, d, lib);
             if (success) {
                 double coreSize = std::max(400.0, std::sqrt((double)d.instances.size()) * 30.0);
-                d.coreWidth = coreSize;
+                d.coreWidth  = coreSize;
                 d.coreHeight = coreSize;
             } else {
-                py::print("Failed to load standard cell library or netlist.");
+                py::print("Failed to load netlist from", filename);
             }
         });
 
