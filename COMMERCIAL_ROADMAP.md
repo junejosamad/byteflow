@@ -108,12 +108,13 @@
 - [ ] Validate flow end-to-end
 - [ ] Document layer mapping
 
-### 2.3 SDC Constraint Parsing (Critical for Timing Closure)
-- [ ] Parse `create_clock` (clock definition, period, waveform)
-- [ ] Parse `set_input_delay` / `set_output_delay`
-- [ ] Parse `set_false_path`, `set_multicycle_path`
-- [ ] Parse `set_clock_uncertainty`, `set_clock_latency`
-- [ ] Store constraints in Design object; propagate into STA engine
+### 2.3 SDC Constraint Parsing (Critical for Timing Closure) ✅ COMPLETE (2026-04-20)
+- [x] Parse `create_clock` (clock definition, period, waveform)
+- [x] Parse `set_input_delay` / `set_output_delay` (per-port, -max/-min, -clock)
+- [x] Parse `set_false_path`, `set_multicycle_path`
+- [x] Parse `set_clock_uncertainty`, `set_clock_latency`
+- [x] Store constraints in Design.sdc (SdcConstraints); propagate into Timer on updateTiming()
+- [x] `chip.read_sdc(path)` + `chip.get_clock_period()` Python API — 14/14 tests pass
 
 ### 2.4 DEF Input Parser
 - [ ] Parse DEF `COMPONENTS` section (placed instances with locations)

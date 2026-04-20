@@ -81,9 +81,11 @@ private:
     Library*    library;
     SpefEngine* spefEngine;
 
-    double clockPeriod = 1000.0;  // ps  (1 GHz default)
-    double inputDelay  =    0.0;  // ps  (primary input arrival offset)
-    double outputDelay =    0.0;  // ps  (primary output budget reduction)
+    double clockPeriod      = 1000.0;  // ps  (1 GHz default)
+    double inputDelay       =    0.0;  // ps  (primary input arrival offset)
+    double outputDelay      =    0.0;  // ps  (primary output budget reduction)
+    double clockUncertainty =    0.0;  // ps  (set_clock_uncertainty)
+    double clockLatency     =    0.0;  // ps  (set_clock_latency)
 
     std::vector<TimingNode*>           nodes;
     std::unordered_map<Pin*, TimingNode*> pinToNode;

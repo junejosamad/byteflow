@@ -4,6 +4,7 @@
 #include <iostream>
 #include <map>
 #include "Library.h"
+#include "parser/SdcParser.h"
 
 #ifdef GateInstance
 #undef GateInstance
@@ -107,8 +108,10 @@ public:
     std::unordered_map<std::string, Net*> netMap;
     Library* cellLibrary = nullptr; // Reference to the loaded std cell definitions
 
-    double coreWidth = 0.0;
+    double coreWidth  = 0.0;
     double coreHeight = 0.0;
+
+    SdcConstraints sdc;  // loaded by read_sdc(); consumed by Timer
 
     void addInstance(GateInstance* inst) {
         instances.push_back(inst);

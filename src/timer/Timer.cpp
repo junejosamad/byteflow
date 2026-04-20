@@ -181,10 +181,18 @@ void Timer::propagateArrivalTimes() {
         node->wireDelay   = 0.0;
     }
 
-    // Seed: primary inputs (no parents) start at inputDelay
+    // Seed: primary inputs (no parents) start at inputDelay (or SDC per-port delay)
     for (auto node : nodes) {
         if (node->parents.empty()) {
-            node->arrivalTime = inputDelay;
+            double arrival = inputDelay;
+            if (design && !design->sdc.empty() && node->pin) {
+                // Use per-port SDC input delay if specified
+                std::string portName = node->pin->name;
+                if (node->pin->inst) portName = node->pin->inst->name;
+                double sdcDelay = design->sdc.inputDelay(portName, /*max=*/true);
+                if (sdcDelay != 0.0) arrival = sdcDelay;
+            }
+            node->arrivalTime = arrival;
         }
     }
     // Sequential Q-pins: clock arrival + clk-to-Q delay
@@ -293,17 +301,35 @@ void Timer::propagateRequiredTimes() {
     for (auto node : nodes) {
         if (!isEndpoint(node)) continue;
 
+        // False path: exclude from timing check (infinite required time)
+        if (design && !design->sdc.empty() && node->pin) {
+            std::string portName = node->pin->name;
+            if (node->pin->inst) portName = node->pin->inst->name;
+            if (design->sdc.isFalsePath("", portName)) continue;
+        }
+
         if (node->pin->inst && node->pin->inst->type &&
             node->pin->inst->type->isSequential &&
             node->pin->name == "D") {
-            // Setup constraint: data must be stable before clock edge
-            double setup = getSetupTime(node->pin->inst);
-            node->requiredTime = std::min(node->requiredTime,
-                                          clockPeriod - setup);
+            // Setup constraint: data must arrive before clock edge - setup - uncertainty
+            double setup   = getSetupTime(node->pin->inst);
+            int    mcMult  = 1;
+            if (design && !design->sdc.empty() && node->pin->inst) {
+                mcMult = design->sdc.multicycleMultiplier("", node->pin->inst->name);
+            }
+            double budget = clockPeriod * mcMult - setup - clockUncertainty + clockLatency;
+            node->requiredTime = std::min(node->requiredTime, budget);
         } else {
-            // Primary output: must arrive before clock period - output_delay
-            node->requiredTime = std::min(node->requiredTime,
-                                          clockPeriod - outputDelay);
+            // Primary output: clock period - output_delay - uncertainty
+            double outDel = outputDelay;
+            if (design && !design->sdc.empty() && node->pin) {
+                std::string portName = node->pin->name;
+                if (node->pin->inst) portName = node->pin->inst->name;
+                double sdcOut = design->sdc.outputDelay(portName, /*max=*/true);
+                if (sdcOut != 0.0) outDel = sdcOut;
+            }
+            double budget = clockPeriod - outDel - clockUncertainty + clockLatency;
+            node->requiredTime = std::min(node->requiredTime, budget);
         }
     }
 
@@ -346,9 +372,23 @@ void Timer::calculateSlack() {
 }
 
 // ============================================================
-// 7. Master Update
+// 7. Master Update — apply SDC constraints if loaded
 // ============================================================
 void Timer::updateTiming() {
+    // If the design has SDC constraints, override the scalar settings.
+    if (design && !design->sdc.empty()) {
+        const ClockDef* clk = design->sdc.primaryClock();
+        if (clk) {
+            clockPeriod = clk->period_ps;
+            // Clock uncertainty and latency reduce the available timing budget
+            clockUncertainty = clk->uncertainty_ps > 0
+                               ? clk->uncertainty_ps
+                               : design->sdc.globalClockUncertainty_ps;
+            clockLatency     = clk->latency_ps > 0
+                               ? clk->latency_ps
+                               : design->sdc.globalClockLatency_ps;
+        }
+    }
     propagateArrivalTimes();
     propagateRequiredTimes();
     calculateSlack();

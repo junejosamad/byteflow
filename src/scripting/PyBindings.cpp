@@ -17,6 +17,7 @@
 #include "place/Legalizer.h"
 #include "floorplan/Floorplanner.h"
 #include "analysis/SpefEngine.h"
+#include "parser/SdcParser.h"
 
 namespace py = pybind11;
 
@@ -57,6 +58,15 @@ PYBIND11_MODULE(open_eda, m) {
 
             py::print("[PDK] Loaded", (int)lib->cells.size(), "cells from", libertyPath);
         })
+        .def("read_sdc", [](Design& d, const std::string& filename) {
+            SdcParser parser;
+            bool ok = parser.parse(filename, d.sdc);
+            if (!ok) py::print("[SDC] Failed to load", filename);
+            return ok;
+        }, "Load SDC timing constraints from file")
+        .def("get_clock_period", [](const Design& d) {
+            return d.sdc.clockPeriod();
+        }, "Return primary clock period from loaded SDC (ps)")
         .def("load_verilog", [](Design& d, const std::string& filename) {
             // If load_pdk() was already called, cellLibrary is non-null and populated.
             // In that case skip the default benchmarks/ library to avoid overwriting.
