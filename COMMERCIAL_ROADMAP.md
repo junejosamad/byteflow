@@ -2,7 +2,7 @@
 
 **Goal:** Evolve OpenEDA from a research prototype into a commercial-grade RTL-to-GDSII physical design platform.  
 **Target Market:** Cloud-native EDA, open-PDK flows (SkyWater 130nm / GF180), academic → production pipeline.  
-**Last Updated:** 2026-04-19
+**Last Updated:** 2026-04-20
 
 ---
 
@@ -34,7 +34,7 @@
 ### 0.3 Routing Robustness
 - [ ] Fix pin access point computation (currently assumes pin center is always valid)
 - [ ] Add escape routing for macro pin congestion
-- [ ] Validate convergence on designs > 500 cells
+- [x] Validate convergence on designs > 500 cells (bench_500: 511 cells, 88s)
 
 ### 0.4 Error Handling & Logging
 - [x] Structured logger with INFO/WARN/ERROR levels (`include/util/Logger.h`)
@@ -54,13 +54,16 @@
 ## Phase 1 — Scalable Core Algorithms
 > Replace prototype algorithms with production-grade equivalents that handle 100K–10M cell designs.
 
-### 1.1 Analytical Placement (Replace Simulated Annealing)
+### 1.1 Analytical Placement (Replace Simulated Annealing) ✓ COMPLETE
 - [x] B2B (Bound-to-Bound) quadratic net model — sparse Laplacian build
 - [x] Jacobi-preconditioned Conjugate Gradient solver (X and Y solved independently)
 - [x] Bin-based density spreading (repulsion gradient per overcrowded bin)
 - [x] Timing-driven net weighting via STA slack (updated every 5 outer iterations)
 - [x] SA fallback retained for designs < 100 cells (SA_THRESHOLD)
 - [x] Convergence check: early exit when HPWL delta < 0.1%
+- [x] COO triplets replace std::map for sparse Laplacian (eliminates heap fragmentation)
+- [x] Placement collapse fix: EPS=1.0, ALPHA=0.5, best-HPWL restore on collapse detection
+- [x] Scale validated: bench_200 (207 cells, HPWL=2168), bench_500 (511 cells) — 13/13 pass
 - [ ] Benchmark on 100K cell design (needs structural Verilog at that scale)
 
 ### 1.2 Global Routing (New Stage Between Placement and Detail Route)
@@ -72,6 +75,10 @@
 - [ ] Feed guides into A* detailed router to constrain search space
 
 ### 1.3 Detailed Router Scalability
+- [x] Pre-allocated member vectors (astar_pq_buf, astar_segment, grid_usage/history/obstacles)
+- [x] Generational searchId/netUsedId replace std::set — O(1) ownership checks, zero heap churn
+- [x] Adaptive grid scaling (MAX_GRID_NODES=300K), dynamic bounding box, MAX_EXPAND=60K cap
+- [x] Fix negative congCost bug (pin usage -50 + PDN obstacles → parentIdx cycles → bad_alloc)
 - [ ] Refactor A* to operate within global route guide bounding boxes
 - [ ] Add track assignment stage before maze routing
 - [ ] Multi-threading: per-GCell parallel routing (replace per-net)
