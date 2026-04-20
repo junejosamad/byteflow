@@ -182,11 +182,14 @@ PYBIND11_MODULE(open_eda, m) {
 
     // 10. Expose TimingSummary struct
     py::class_<TimingSummary>(m, "TimingSummary")
-        .def_readonly("wns",           &TimingSummary::wns)
-        .def_readonly("tns",           &TimingSummary::tns)
-        .def_readonly("violations",    &TimingSummary::violations)
-        .def_readonly("endpoints",     &TimingSummary::endpoints)
-        .def_readonly("critical_path", &TimingSummary::criticalPath);
+        .def_readonly("wns",             &TimingSummary::wns)
+        .def_readonly("tns",             &TimingSummary::tns)
+        .def_readonly("violations",      &TimingSummary::violations)
+        .def_readonly("endpoints",       &TimingSummary::endpoints)
+        .def_readonly("critical_path",   &TimingSummary::criticalPath)
+        .def_readonly("hold_wns",        &TimingSummary::holdWns)
+        .def_readonly("hold_tns",        &TimingSummary::holdTns)
+        .def_readonly("hold_violations", &TimingSummary::holdViolations);
 
     // 11. Expose Timer (sign-off STA engine)
     py::class_<Timer>(m, "Timer")
@@ -204,16 +207,26 @@ PYBIND11_MODULE(open_eda, m) {
              "Run forward + backward passes, compute slack")
         .def("set_clock_period",    &Timer::setClockPeriod,
              "Set clock period in picoseconds", py::arg("period_ps"))
-        .def("set_input_delay",     &Timer::setInputDelay,
+        .def("set_input_delay",       &Timer::setInputDelay,
              "Set primary-input arrival offset (ps)", py::arg("delay_ps"))
-        .def("set_output_delay",    &Timer::setOutputDelay,
+        .def("set_output_delay",      &Timer::setOutputDelay,
              "Set primary-output budget reduction (ps)", py::arg("delay_ps"))
-        .def("get_wns",             &Timer::getWNS,
-             "Worst Negative Slack across all endpoints (ps)")
-        .def("get_tns",             &Timer::getTNS,
-             "Total Negative Slack — sum of all violations (ps)")
-        .def("get_violation_count", &Timer::getViolationCount,
-             "Number of endpoints with negative slack")
+        .def("set_clock_uncertainty", &Timer::setClockUncertainty,
+             "Set clock uncertainty (jitter+skew) in ps", py::arg("unc_ps"))
+        .def("set_clock_latency",     &Timer::setClockLatency,
+             "Set clock source latency in ps", py::arg("lat_ps"))
+        .def("get_wns",                  &Timer::getWNS,
+             "Setup WNS — worst setup slack across all endpoints (ps)")
+        .def("get_tns",                  &Timer::getTNS,
+             "Setup TNS — sum of all setup violations (ps)")
+        .def("get_violation_count",      &Timer::getViolationCount,
+             "Number of endpoints with negative setup slack")
+        .def("get_hold_wns",             &Timer::getHoldWNS,
+             "Hold WNS — worst hold slack across all FF D-pins (ps)")
+        .def("get_hold_tns",             &Timer::getHoldTNS,
+             "Hold TNS — sum of all hold violations (ps)")
+        .def("get_hold_violation_count", &Timer::getHoldViolationCount,
+             "Number of FF D-pins with negative hold slack")
         .def("get_summary",         &Timer::getSummary,
              "Return a TimingSummary with WNS, TNS, violation count")
         .def("report_critical_path",&Timer::reportCriticalPath,

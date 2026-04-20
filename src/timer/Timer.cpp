@@ -372,6 +372,35 @@ void Timer::calculateSlack() {
 }
 
 // ============================================================
+// 6b. Hold Checks — computed after forward pass, independent of required times
+//     Hold check applies only to FF D-pins.
+//     Hold slack = arrivalTime - (clockLatency + holdTime + clockUncertainty)
+//     Positive = hold met; negative = hold violated (path too fast).
+// ============================================================
+void Timer::computeHoldChecks() {
+    const double INF = std::numeric_limits<double>::infinity();
+
+    for (auto node : nodes) {
+        node->holdSlack = INF;  // non-FF nodes get infinity (N/A)
+    }
+
+    for (auto node : nodes) {
+        if (!node->pin || !node->pin->inst) continue;
+        if (!node->pin->inst->type) continue;
+        if (!node->pin->inst->type->isSequential) continue;
+        if (node->pin->name != "D") continue;
+
+        double holdTime = getHoldTime(node->pin->inst);
+        // Hold required time: clock must have passed (latency) + hold window
+        double holdRequired = clockLatency + holdTime + clockUncertainty;
+        node->holdSlack = node->arrivalTime - holdRequired;
+
+        // Write back to Pin for reporting
+        node->pin->slack = std::min(node->pin->slack, node->holdSlack);
+    }
+}
+
+// ============================================================
 // 7. Master Update — apply SDC constraints if loaded
 // ============================================================
 void Timer::updateTiming() {
@@ -391,6 +420,7 @@ void Timer::updateTiming() {
     }
     propagateArrivalTimes();
     propagateRequiredTimes();
+    computeHoldChecks();
     calculateSlack();
 }
 
@@ -423,11 +453,43 @@ int Timer::getViolationCount() const {
     return count;
 }
 
+double Timer::getHoldWNS() const {
+    const double INF = std::numeric_limits<double>::infinity();
+    double whs = INF;
+    for (auto node : nodes) {
+        if (node->holdSlack < INF && node->holdSlack < whs)
+            whs = node->holdSlack;
+    }
+    return (whs == INF) ? 0.0 : whs;
+}
+
+double Timer::getHoldTNS() const {
+    double tns = 0.0;
+    const double INF = std::numeric_limits<double>::infinity();
+    for (auto node : nodes) {
+        if (node->holdSlack < INF && node->holdSlack < 0.0)
+            tns += node->holdSlack;
+    }
+    return tns;
+}
+
+int Timer::getHoldViolationCount() const {
+    int count = 0;
+    const double INF = std::numeric_limits<double>::infinity();
+    for (auto node : nodes) {
+        if (node->holdSlack < INF && node->holdSlack < 0.0) count++;
+    }
+    return count;
+}
+
 TimingSummary Timer::getSummary() const {
     TimingSummary s;
-    s.wns        = getWNS();
-    s.tns        = getTNS();
-    s.violations = getViolationCount();
+    s.wns           = getWNS();
+    s.tns           = getTNS();
+    s.violations    = getViolationCount();
+    s.holdWns       = getHoldWNS();
+    s.holdTns       = getHoldTNS();
+    s.holdViolations= getHoldViolationCount();
 
     for (auto node : nodes) {
         if (isEndpoint(node)) s.endpoints++;
@@ -453,12 +515,20 @@ void Timer::reportCriticalPath() const {
     std::cout << "  Wire Model   : "
               << (spefEngine ? "Elmore RC"          : "HPWL Estimate")  << "\n";
     std::cout << "------------------------------------------------------------\n";
-    std::cout << "  WNS          : " << summary.wns << " ps\n";
-    std::cout << "  TNS          : " << summary.tns << " ps\n";
-    std::cout << "  Violations   : " << summary.violations
+    std::cout << "  Setup WNS    : " << summary.wns << " ps\n";
+    std::cout << "  Setup TNS    : " << summary.tns << " ps\n";
+    std::cout << "  Setup Viols  : " << summary.violations
               << " / " << summary.endpoints << " endpoints\n";
+    std::cout << "  Hold  WNS    : " << summary.holdWns << " ps\n";
+    std::cout << "  Hold  TNS    : " << summary.holdTns << " ps\n";
+    std::cout << "  Hold  Viols  : " << summary.holdViolations << "\n";
+    bool setupOk = (summary.violations == 0);
+    bool holdOk  = (summary.holdViolations == 0);
     std::cout << "  Status       : "
-              << (summary.violations == 0 ? "TIMING MET" : "*** TIMING VIOLATION ***")
+              << (setupOk && holdOk ? "TIMING MET"
+                  : !setupOk && !holdOk ? "*** SETUP + HOLD VIOLATIONS ***"
+                  : !setupOk           ? "*** SETUP VIOLATION ***"
+                                       : "*** HOLD VIOLATION ***")
               << "\n";
     std::cout << "------------------------------------------------------------\n";
 
@@ -525,27 +595,43 @@ void Timer::reportCriticalPath() const {
 // 10. All Endpoints Report
 // ============================================================
 void Timer::reportAllEndpoints() const {
+    const double INF = std::numeric_limits<double>::infinity();
+
     std::cout << "\n  --- Endpoint Slack Summary ---\n";
     std::cout << "  " << std::left
               << std::setw(22) << "Instance"
               << std::setw(6)  << "Pin"
               << std::setw(14) << "Arrival(ps)"
               << std::setw(14) << "Required(ps)"
-              << std::setw(12) << "Slack(ps)"
+              << std::setw(14) << "SetupSlk(ps)"
+              << std::setw(14) << "HoldSlk(ps)"
               << "Status\n";
-    std::cout << "  " << std::string(78, '-') << "\n";
+    std::cout << "  " << std::string(100, '-') << "\n";
 
     for (auto node : nodes) {
-        if (!isEndpoint(node)) continue;
+        // show both setup endpoints and hold-check FF D-pins
+        bool isSetupEP = isEndpoint(node);
+        bool isHoldEP  = (node->holdSlack < INF);
+        if (!isSetupEP && !isHoldEP) continue;
+
         std::string inst = node->pin->inst ? node->pin->inst->name : "(po)";
-        bool ok = node->slack >= 0.0;
+        bool setupOk = node->slack >= 0.0;
+        bool holdOk  = (node->holdSlack >= 0.0 || node->holdSlack == INF);
+
+        std::string status;
+        if (!setupOk && !holdOk) status = "SETUP+HOLD";
+        else if (!setupOk)       status = "SETUP_VIOL";
+        else if (!holdOk)        status = "HOLD_VIOL";
+        else                     status = "MET";
+
         std::cout << "  " << std::left
                   << std::setw(22) << inst
                   << std::setw(6)  << node->pin->name
                   << std::fixed << std::setprecision(2)
                   << std::setw(14) << node->arrivalTime
-                  << std::setw(14) << node->requiredTime
-                  << std::setw(12) << node->slack
-                  << (ok ? "MET" : "VIOLATION") << "\n";
+                  << std::setw(14) << (node->requiredTime == INF ? 0.0 : node->requiredTime)
+                  << std::setw(14) << node->slack
+                  << std::setw(14) << (node->holdSlack == INF ? 0.0 : node->holdSlack)
+                  << status << "\n";
     }
 }

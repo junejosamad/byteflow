@@ -148,11 +148,15 @@
 - [ ] Per-corner arrival/required time propagation
 - [ ] Report: worst slack per corner/mode combination
 
-### 3.2 Setup & Hold Timing Checks
-- [ ] Setup check: data arrival < clock arrival − setup_time
-- [ ] Hold check: data arrival > clock arrival + hold_time
-- [ ] Per-flip-flop slack reporting
-- [ ] Identify setup-critical vs. hold-critical paths separately
+### 3.2 Setup & Hold Timing Checks ✅ COMPLETE (2026-04-20)
+- [x] Setup check: data arrival < clockPeriod - setupTime - uncertainty + latency
+- [x] Hold check: data arrival > clockLatency + holdTime + uncertainty (FF D-pins only)
+- [x] Per-FF holdSlack stored on TimingNode; written back to Pin for reporting
+- [x] reportAllEndpoints() shows both SetupSlk and HoldSlk columns
+- [x] reportCriticalPath() shows SETUP / HOLD / SETUP+HOLD status
+- [x] getHoldWNS(), getHoldTNS(), getHoldViolationCount() + TimingSummary hold fields
+- [x] set_clock_uncertainty(), set_clock_latency() Python API on Timer
+- [x] tests/test_setup_hold.py — 18/18 pass; DFF chain hold violations correctly detected
 
 ### 3.3 Signal Integrity / Crosstalk
 - [ ] Coupling capacitance extraction between adjacent wires
