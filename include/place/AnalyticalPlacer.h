@@ -47,9 +47,11 @@ private:
     void buildMovableIndex();
     void initPositions(double coreW, double coreH);
 
-    // Build B2B Laplacian; returns system matrix A, RHS bx, by
-    CsrMatrix buildLaplacian(std::vector<double>& bx,
-                              std::vector<double>& by) const;
+    // Build SEPARATE B2B Laplacians for X and Y (v2: fixes HPWL=0 bug)
+    void buildLaplacians(CsrMatrix& Ax, std::vector<double>& bx,
+                         CsrMatrix& Ay, std::vector<double>& by) const;
+
+    double computeHpwl() const;
 
     // Jacobi-preconditioned CG — solves A*x = b in place
     void pcg(const CsrMatrix& A,

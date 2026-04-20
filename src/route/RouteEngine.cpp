@@ -5,7 +5,6 @@
 #include <queue>
 #include <cmath>
 #include <algorithm>
-#include <set>
 #include <cstdlib>
 #include <map>
 #include <tuple>
@@ -20,17 +19,8 @@ struct Point3D {
     }
 };
 
-// A* Search Node
-struct Node {
-    int x, y, l;
-    double gCost; // Cost from start
-    double fCost; // gCost + heuristic
-    int px, py, pl; // Parent coordinates for backtracking
-    
-    bool operator>(const Node& other) const {
-        return fCost > other.fCost;
-    }
-};
+// AStarNode defined in RouteEngine.h — referenced here as Node alias for brevity
+using Node = AStarNode;
 
 // Helper to flatten 3D coordinates into a 1D array index for extreme speed
 inline int getIdx(int x, int y, int l, int gridH, int gridL) {
@@ -38,25 +28,38 @@ inline int getIdx(int x, int y, int l, int gridH, int gridL) {
 }
 
 void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
-    // Use 1:1 grid mapping (no scaling) but with a massive padding to ensure Edge cells have routing space
+    omp_set_num_threads(std::min(omp_get_max_threads(), 4));
     gridW = gridW + 60;
     gridH = gridH + 60;
-    double scaleX = 1.0;
-    double scaleY = 1.0;
+    int gridL = 7;   // Layers 0, 1, 2, 3, 4, 5, 6 (M1 through M6 where 0 is unused)
     int maxIter = 30;
-    int gridL = 6;   // Layers 0, 1, 2, 3, 4, 5 (M1 through M6)
-    int totalNodes = gridW * gridH * gridL;
-    std::cout << "  Grid: " << gridW << " x " << gridH << " x " << gridL 
-              << " (" << totalNodes << " nodes)"
-              << ", Max Iterations: " << maxIter << "\n";
 
-    // History cost (long-term memory of traffic jams)
-    std::vector<double> history(totalNodes, 1.0);
-        
+    // Adaptive scale: keep totalNodes (gridW*gridH*gridL) ≤ MAX_GRID_NODES
+    static const int MAX_GRID_NODES = 300000;
+    double rawNodes = (double)gridW * gridH * gridL;
+    double scaleXY  = (rawNodes > MAX_GRID_NODES)
+                        ? std::sqrt(rawNodes / MAX_GRID_NODES)
+                        : 1.0;
+    double scaleX = scaleXY;
+    double scaleY = scaleXY;
+    gridW = (int)std::ceil(gridW / scaleXY);
+    gridH = (int)std::ceil(gridH / scaleXY);
+
+    int totalNodes = gridW * gridH * gridL;
+    std::cout << "  Grid: " << gridW << " x " << gridH << " x " << gridL
+              << " (" << totalNodes << " nodes, scale=" << scaleXY << ")"
+              << ", Max Iterations: " << maxIter << "\n" << std::flush;
+
+    // Use member vectors — allocated once on first call, reused across iterations
+    ensureAstarCapacity(totalNodes);
+    // Reset history, obstacles, and usage for this routing run
+    std::fill(grid_history.begin(),   grid_history.begin()   + totalNodes, 1.0);
+    std::fill(grid_obstacles.begin(), grid_obstacles.begin() + totalNodes, 0);
+    std::fill(grid_usage.begin(),     grid_usage.begin()     + totalNodes, 0);
+    auto& history   = grid_history;
+    auto& obstacles = grid_obstacles;
     bool hasConflicts = true;
 
-    // Pre-calculate static obstacles (Pins and pre-routed power nets)
-    std::vector<int> obstacles(totalNodes, 0);
     std::vector<Net*> pinOwner(totalNodes, nullptr);
     
     // Add Pin Keep-Out Zones: Record who owns which pin
@@ -92,8 +95,8 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             int mx2 = std::min(gridW - 1, (int)((inst->x + inst->type->width) / scaleX));
             int my2 = std::min(gridH - 1, (int)((inst->y + inst->type->height) / scaleY));
             
-            // Block routing on layer 0, 1, 2 (M1, M2, M3)
-            for (int l = 0; l < 3 && l < gridL; ++l) {
+            // Block routing on layer 1, 2, 3 (M1, M2, M3)
+            for (int l = 1; l <= 3 && l < gridL; ++l) {
                 for (int x = mx1; x <= mx2; ++x) {
                     for (int y = my1; y <= my2; ++y) {
                         int idx = getIdx(x, y, l, gridH, gridL);
@@ -108,85 +111,57 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
     }
 
     for (int iter = 1; iter <= maxIter && hasConflicts; ++iter) {
-        std::cout << "  Iteration " << iter << "...\n";
+        std::cout << "  Iteration " << iter << "...\n" << std::flush;
         hasConflicts = false;
         
-        // Present usage map for this iteration. 
-        // We initialize it with the footprints of all nets from the PREVIOUS iteration to enable clean-net skipping!
-        std::vector<int> usage(totalNodes, 0);
-        if (iter > 1) {
-            for (Net* net : design.nets) {
-                if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
-                for (const auto& p : net->routePath) {
-                    int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
-                    int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
-                    usage[getIdx(px, py, p.layer, gridH, gridL)]++;
-                }
-            }
-        }
-        
+        // usage carries forward from previous iteration; rip-up (below) removes old routes
+        auto& usage = grid_usage;
+
         int netCount = 0;
         int totalNets = 0;
         for (Net* n : design.nets) {
             if (n->name != "VDD" && n->name != "VSS" && n->connectedPins.size() >= 2) totalNets++;
         }
 
-        #pragma omp parallel
+        // Reset searchId each PathFinder iteration to prevent stale ID collisions
+        std::fill(astar_searchId.begin(), astar_searchId.begin() + totalNodes, 0);
         {
-            // PRE-ALLOCATE A* arrays ONCE PER THREAD !
-            std::vector<double> minCost(totalNodes);
-            std::vector<Node> parent(totalNodes);
-            std::vector<int> searchId(totalNodes, 0);
+            auto& minCost    = astar_minCost;
+            auto& parentIdx  = astar_parentIdx;
+            auto& searchId   = astar_searchId;
+            auto& netUsedId  = astar_netUsedId;
             int current_search_id = 0;
+            int current_net_id    = 0;
 
-            #pragma omp for schedule(dynamic)
             for (int netIdx = 0; netIdx < (int)design.nets.size(); ++netIdx) {
                 Net* net = design.nets[netIdx];
 
-                // Skip power lines, they are handled geometrically by PDN generator
                 if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
 
-                // --- 2. ACTIVE RIP-UP & REROUTE (No Skipping!) ---
+                // Rip-up previous route before rerouting
                 if (iter > 1 && net->routePath.size() > 0) {
-                    // Always rip it up by completely removing its old footprint from usage
-                    #pragma omp critical(usage_map_update)
-                    {
-                        for (const auto& p : net->routePath) {
-                            int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
-                            int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
-                            usage[getIdx(px, py, p.layer, gridH, gridL)]--;
-                        }
+                    for (const auto& p : net->routePath) {
+                        int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
+                        int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
+                        usage[getIdx(px, py, p.layer, gridH, gridL)]--;
                     }
                 }
-                
-                int currentNetCount;
-                #pragma omp critical(net_count_update)
-                {
-                    currentNetCount = ++netCount;
-                }
-                
-                if (currentNetCount % 100 == 0) {
-                    #pragma omp critical(print_lock)
-                    {
-                        std::cout << "    Routing net " << currentNetCount << "/" << totalNets << "...\n";
-                    }
-                }
+
+                int currentNetCount = ++netCount;
+                std::cout << "    Net " << currentNetCount << "/" << totalNets
+                          << " [" << net->name << "] pins=" << net->connectedPins.size()
+                          << "\n" << std::flush;
                 
                 net->routePath.clear();
-                std::set<Point3D> netUsedNodes; // Prevent a multi-pin net from penalizing itself
+                current_net_id++; // Generational ID — nodes owned by this net have netUsedId[idx]==current_net_id
                 
                 Pin* startPin = net->connectedPins[0];
                 if (!startPin || !startPin->inst) continue;
 
-                // --- 1. UNLOCK OWN PINS (Critical Section) ---
-                // Only one thread can modify the global usage map at a time
-                #pragma omp critical(usage_map_update)
-                {
-                    for (Pin* p : net->connectedPins) {
-                        int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
-                        int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
-                        usage[getIdx(px, py, 1, gridH, gridL)] -= 50; 
-                    }
+                for (Pin* p : net->connectedPins) {
+                    int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
+                    int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
+                    usage[getIdx(px, py, 1, gridH, gridL)] -= 50;
                 }
 
                 auto isSegmentClear = [&](int x1, int y1, int x2, int y2, int layer) -> bool {
@@ -274,24 +249,19 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 }
 
                 if (patternRouted) {
-                    #pragma omp critical(usage_map_update)
-                    {
-                        std::set<Point3D> localUsed;
-                        for (auto& p : net->routePath) {
-                            int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
-                            int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
-                            localUsed.insert({px, py, p.layer});
-                        }
-                        for (auto& p : localUsed) {
-                            usage[getIdx(p.x, p.y, p.l, gridH, gridL)]++;
-                        }
-                        for (Pin* p : net->connectedPins) {
-                            int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
-                            int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
-                            usage[getIdx(px, py, 1, gridH, gridL)] += 50; 
-                        }
+                    // Update usage directly — no set needed (mild over-count is OK for PathFinder)
+                    for (const auto& p : net->routePath) {
+                        int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
+                        int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
+                        if (p.layer >= 1 && p.layer < gridL)
+                            usage[getIdx(px, py, p.layer, gridH, gridL)]++;
                     }
-                    continue; 
+                    for (Pin* p : net->connectedPins) {
+                        int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
+                        int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
+                        usage[getIdx(px, py, 1, gridH, gridL)] += 50;
+                    }
+                    continue;
                 }
 
                 int sx = std::max(0, std::min(gridW-1, (int)(startPin->getAbsX() / scaleX)));
@@ -311,20 +281,21 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 current_search_id++;
                 // parent doesn't need full reset - only accessed for found paths
 
-                std::priority_queue<Node, std::vector<Node>, std::greater<Node>> pq;
-                
+                // Reuse member buffer — clear() keeps capacity, preventing heap reallocation
+                astar_pq_buf.clear();
+
                 int startIdx = getIdx(sx, sy, sl, gridH, gridL);
-                pq.push({sx, sy, sl, 0.0, 0.0, -1, -1, -1});
+                int targetIdx = getIdx(ex, ey, el, gridH, gridL);
+                astar_pq_buf.push_back({startIdx, 0.0f, 0.0f});
+                std::push_heap(astar_pq_buf.begin(), astar_pq_buf.end(), std::greater<Node>());
                 searchId[startIdx] = current_search_id;
                 minCost[startIdx] = 0.0;
-                
-                // THE CRITICAL FIX: Initialize the parent of the start node so it doesn't loop infinitely
-                parent[startIdx] = {sx, sy, sl, 0.0, 0.0, -1, -1, -1};
-                
-                bool found = false;
-                int fx = -1, fy = -1, fl = -1;
+                parentIdx[startIdx] = -1;
 
-                // 3. DYNAMIC BOUNDING BOX - INCREASE MARGIN DRAMATICALLY
+                bool found = false;
+                int foundIdx = -1;
+
+                // 3. DYNAMIC BOUNDING BOX
                 int bbMinX = gridW, bbMaxX = 0, bbMinY = gridH, bbMaxY = 0;
                 for (Pin* p : net->connectedPins) {
                     if (!p || !p->inst) continue;
@@ -335,107 +306,107 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     bbMinY = std::min(bbMinY, py);
                     bbMaxY = std::max(bbMaxY, py);
                 }
-                
-                // Allow the router to swing wiiide around PDN via meshes (massively expanded for macro avoidance)
-                int margin = 200 + (iter * 100); 
+                int margin = std::min(30 + iter * 15, std::min(gridW / 2, gridH / 2));
                 bbMinX = std::max(1, bbMinX - margin);
                 bbMaxX = std::min(gridW - 2, bbMaxX + margin);
                 bbMinY = std::max(1, bbMinY - margin);
                 bbMaxY = std::min(gridH - 2, bbMaxY + margin);
 
-                // 3D Movement: Left, Right, Down, Up, Layer Down, Layer Up
-                int dx[] = {-1, 1, 0, 0, 0, 0};
-                int dy[] = {0, 0, -1, 1, 0, 0};
-                int dl[] = {0, 0, 0, 0, -1, 1};
+                const int HL = gridH * gridL;
+                const int dx[] = {-1, 1, 0, 0, 0, 0};
+                const int dy[] = {0, 0, -1, 1, 0, 0};
+                const int dl[] = {0, 0, 0, 0, -1, 1};
 
-                while (!pq.empty()) {
-                    Node curr = pq.top();
-                    pq.pop();
+                const int MAX_EXPAND = 60000; // Safety cap — prevents runaway A* on congested grids
+                int nodesExpanded = 0;
+                while (!astar_pq_buf.empty() && nodesExpanded < MAX_EXPAND) {
+                    Node curr = astar_pq_buf.front();
+                    std::pop_heap(astar_pq_buf.begin(), astar_pq_buf.end(), std::greater<Node>());
+                    astar_pq_buf.pop_back();
+                    nodesExpanded++;
 
-                    if (curr.x == ex && curr.y == ey && curr.l == el) {
+                    if (curr.idx == targetIdx) {
                         found = true;
-                        fx = curr.x; fy = curr.y; fl = curr.l;
+                        foundIdx = curr.idx;
                         break;
                     }
 
-                    int currIdx = getIdx(curr.x, curr.y, curr.l, gridH, gridL);
-                    if (curr.gCost > minCost[currIdx]) continue;
+                    if ((double)curr.gCost > minCost[curr.idx]) continue;
+
+                    // Decode (cx, cy, cl) from flat index
+                    int cx = curr.idx / HL;
+                    int rem = curr.idx % HL;
+                    int cy = rem / gridL;
+                    int cl = rem % gridL;
 
                     for (int d = 0; d < 6; ++d) {
-                        int nx = curr.x + dx[d];
-                        int ny = curr.y + dy[d];
-                        int nl = curr.l + dl[d];
+                        int nx = cx + dx[d];
+                        int ny = cy + dy[d];
+                        int nl = cl + dl[d];
 
-                        // Stay within bounding box AND valid layers, loosen boundary Keep-Out Margin so edge pins can escape
-                        if (nx >= bbMinX && nx <= bbMaxX && ny >= bbMinY && ny <= bbMaxY && 
-                            nx >= 0 && nx < gridW && ny >= 0 && ny < gridH && 
-                            nl >= 1 && nl < gridL) {
-                            int nIdx = getIdx(nx, ny, nl, gridH, gridL);
-                            double stepCost = 1.0; 
-                            
-                            if (dl[d] != 0) {
-                                // Switching layers (Via) - Make it cheaper to jump layers to bypass congestion
-                                stepCost = 4.0; 
-                            } else if (nl == 1) {
-                                // LAYER 1 (M1): Very expensive local driveway
-                                stepCost = 15.0; 
-                            } else if (nl == 2 || nl == 4) {
-                                // LAYER 2, 4 (M2, M4): Vertical Highways
-                                // If moving horizontally (dx != 0), apply a penalty
-                                if (dx[d] != 0) stepCost = 5.0;
-                                else stepCost = 1.0; 
-                            } else if (nl == 3 || nl == 5) {
-                                // LAYER 3, 5 (M3, M5): Horizontal Highways
-                                // If moving vertically (dy != 0), apply a penalty
-                                if (dy[d] != 0) stepCost = 5.0;
-                                else stepCost = 1.0; 
+                        if (nx < bbMinX || nx > bbMaxX || ny < bbMinY || ny > bbMaxY ||
+                            nl < 1 || nl >= gridL) continue;
+
+                        int nIdx = getIdx(nx, ny, nl, gridH, gridL);
+                        float stepCost;
+                        if (dl[d] != 0) {
+                            stepCost = 4.0f;
+                        } else if (nl == 1) {
+                            stepCost = 15.0f;
+                        } else if (nl == 2 || nl == 4 || nl == 6) {
+                            stepCost = (dx[d] != 0) ? 5.0f : 1.0f;
+                        } else {
+                            stepCost = (dy[d] != 0) ? 5.0f : 1.0f;
+                        }
+
+                        if (obstacles[nIdx] >= 99999) {
+                            if (nIdx != targetIdx) continue;
+                        }
+
+                        float congCost = 0.0f;
+                        if (netUsedId[nIdx] != current_net_id) {
+                            // Clamp usage to 0: pins are pre-decremented to -50; negative usage
+                            // must not produce negative congCost (which creates parentIdx cycles).
+                            int eff = (usage[nIdx] > 0) ? usage[nIdx] : 0;
+                            if (eff > 0 || obstacles[nIdx] > 0) {
+                                congCost = (float)(eff * 200.0 + obstacles[nIdx] * 20.0);
                             }
-                            
-                            // CONGESTION PENALTY: Avoid other nets and static obstacles
-                            double congCost = 0.0;
-                            if (netUsedNodes.find({nx,ny,nl}) == netUsedNodes.end()) {
-                                if (usage[nIdx] > 0 || obstacles[nIdx] > 0) {
-                                    congCost = (usage[nIdx] * 15000.0) + (obstacles[nIdx] * 50.0); // Severely penalize hitting dynamic nets, lightly penalize shadow of static nets
-                                }
-                                // Removed massive pin keep-out penalty. In hyper-dense blocks like our CTS buffer, pins are adjacent.
-                            }
-                            
-                            double newCost = curr.gCost + (stepCost * history[nIdx]) + congCost;
-                            
-                            // Lazy initialization of minCost
-                            if (searchId[nIdx] != current_search_id) {
-                                searchId[nIdx] = current_search_id;
-                                minCost[nIdx] = 1e9;
-                            }
-                            
-                            if (newCost < minCost[nIdx]) {
-                                minCost[nIdx] = newCost;
-                                // --- 1. RELAX A* HEURISTIC (Dijkstra-like exploration) ---
-                                // The dense PDN grid makes the Manhattan distance an unreliable heuristic.
-                                // Reducing the multiplier forces the algorithm to explore sideways paths.
-                                double h = std::abs(ex - nx) + std::abs(ey - ny) + std::abs(el - nl)*10.0;
-                                parent[nIdx] = curr; 
-                                pq.push({nx, ny, nl, newCost, newCost + (h * 1.0), curr.x, curr.y, curr.l});
-                            }
+                        }
+
+                        double newCost = (double)curr.gCost + stepCost * history[nIdx] + congCost;
+
+                        if (searchId[nIdx] != current_search_id) {
+                            searchId[nIdx] = current_search_id;
+                            minCost[nIdx] = 1e9;
+                        }
+
+                        if (newCost < minCost[nIdx]) {
+                            minCost[nIdx] = newCost;
+                            float h = (float)(std::abs(ex - nx) + std::abs(ey - ny) + std::abs(el - nl) * 10);
+                            parentIdx[nIdx] = curr.idx;
+                            astar_pq_buf.push_back({nIdx, (float)newCost, (float)newCost + h});
+                            std::push_heap(astar_pq_buf.begin(), astar_pq_buf.end(), std::greater<Node>());
                         }
                     }
                 }
 
                 // Backtrack to build the path segments
                 if (found) {
-                    std::vector<Point> segment; // Fixed Net::Point -> Point
-                    int cx = fx, cy = fy, cl = fl;
-                    while (cx != -1) {
-                        Point p; 
-                        p.x = (int)(cx * scaleX);  // Scale back to design coordinates
-                        p.y = (int)(cy * scaleY);  // Scale back to design coordinates
-                        p.layer = cl;
+                    astar_segment.clear(); // O(1) — retains capacity
+                    auto& segment = astar_segment;
+                    int curIdx = foundIdx;
+                    int maxBacktrack = totalNodes + 2; // safety: can't visit more nodes than exist
+                    while (curIdx >= 0 && maxBacktrack-- > 0) {
+                        int cx2 = curIdx / HL;
+                        int cy2 = (curIdx % HL) / gridL;
+                        int cl2 = curIdx % gridL;
+                        Point p;
+                        p.x = (int)(cx2 * scaleX);
+                        p.y = (int)(cy2 * scaleY);
+                        p.layer = cl2;
                         segment.push_back(p);
-                        netUsedNodes.insert({cx, cy, cl}); // Mark this net's footprint (grid coords)
-                        
-                        int cIdx = getIdx(cx, cy, cl, gridH, gridL);
-                        Node pNode = parent[cIdx];
-                        cx = pNode.px; cy = pNode.py; cl = pNode.pl;
+                        netUsedId[getIdx(cx2, cy2, cl2, gridH, gridL)] = current_net_id;
+                        curIdx = parentIdx[curIdx];
                     }
                     std::reverse(segment.begin(), segment.end());
                     
@@ -453,23 +424,21 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             });
             net->routePath.erase(last, net->routePath.end());
             
-            // --- 3. RELOCK PINS & UPDATE USAGE (Critical Section) ---
-            #pragma omp critical(usage_map_update)
-            {
-                // Lock pins back up
-                for (Pin* p : net->connectedPins) {
-                    int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
-                    int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
-                    usage[getIdx(px, py, 1, gridH, gridL)] += 50; 
-                }
-                
-                // Add the new routed path to the global usage map
-                for (auto const& pt : netUsedNodes) {
-                    usage[getIdx(pt.x, pt.y, pt.l, gridH, gridL)]++;
-                }
+            // Relock pins and commit path to usage map
+            for (Pin* p : net->connectedPins) {
+                int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
+                int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
+                usage[getIdx(px, py, 1, gridH, gridL)] += 50;
             }
-            } // end pragma omp for
-        } // end pragma omp parallel
+            for (const auto& p : net->routePath) {
+                int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
+                int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
+                if (p.layer >= 1 && p.layer < gridL)
+                    usage[getIdx(px, py, p.layer, gridH, gridL)]++;
+            }
+
+            } // end net loop
+        } // end sequential routing block
         
         // Post-Iteration: Check for conflicts and update history map
         int conflicts = 0;
@@ -546,8 +515,9 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
     }
     
     if (hasConflicts) {
-        std::cout << "  Warning: Max iterations reached. Some shorts may remain.\n";
+        std::cout << "  Warning: Max iterations reached. Some shorts may remain.\n" << std::flush;
     }
+    std::cout << "  PathFinder complete.\n" << std::flush;
 
     // === DETAILED ROUTING: Jog Insertion Pass ===
     // Fixes remaining Layer 1 shorts by shifting one wire segment by ±1 unit
@@ -636,4 +606,21 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
     }
     
     std::cout << "  Inserted " << jogsInserted << " jogs to resolve Layer 1 conflicts.\n";
+}
+
+void RouteEngine::ensureAstarCapacity(int totalNodes) {
+    if (totalNodes <= astar_capacity) {
+        std::fill(astar_searchId.begin(), astar_searchId.end(), 0);
+        return;
+    }
+    astar_minCost.assign(totalNodes, 0.0);
+    astar_parentIdx.assign(totalNodes, -1);
+    astar_searchId.assign(totalNodes, 0);
+    astar_netUsedId.assign(totalNodes, 0);
+    grid_history.assign(totalNodes, 1.0);
+    grid_obstacles.assign(totalNodes, 0);
+    grid_usage.assign(totalNodes, 0);
+    astar_pq_buf.reserve(std::min(totalNodes * 2, 400000)); // pre-allocate pq backing store
+    astar_segment.reserve(std::min(totalNodes, 50000));    // pre-allocate backtrack path buffer
+    astar_capacity = totalNodes;
 }
