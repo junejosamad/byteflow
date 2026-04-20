@@ -49,9 +49,10 @@ struct Pin {
     double getAbsY() const;
     
     // TIMING DATA (Populated by STA Engine)
-    double arrivalTime = 0.0;
+    double arrivalTime  = 0.0;
     double requiredTime = 0.0;
-    double slack = 0.0;
+    double slack        = 0.0;
+    double holdSlack    = 1e30; // hold slack (FF D-pins only); 1e30 = N/A
 
     // Constructor defaults to INPUT, we fix this in the Parser
     Pin(GateInstance* i, std::string n, Net* w)

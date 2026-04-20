@@ -17,6 +17,7 @@
 #include "place/Legalizer.h"
 #include "floorplan/Floorplanner.h"
 #include "analysis/SpefEngine.h"
+#include "analysis/EcoEngine.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -180,7 +181,27 @@ PYBIND11_MODULE(open_eda, m) {
             spef.writeSpef(filename, *chip);
         }, "Write SPEF file");
 
-    // 10. Expose TimingSummary struct
+    // 10. Expose EcoResult struct + EcoEngine
+    py::class_<EcoResult>(m, "EcoResult")
+        .def_readonly("setup_fixed",       &EcoResult::setupFixed)
+        .def_readonly("hold_fixed",        &EcoResult::holdFixed)
+        .def_readonly("iterations",        &EcoResult::iterations)
+        .def_readonly("final_setup_wns",   &EcoResult::finalSetupWns)
+        .def_readonly("final_hold_wns",    &EcoResult::finalHoldWns)
+        .def_readonly("final_setup_viols", &EcoResult::finalSetupViols)
+        .def_readonly("final_hold_viols",  &EcoResult::finalHoldViols);
+
+    py::class_<EcoEngine>(m, "EcoEngine")
+        .def(py::init<>())
+        .def("run_timing_closure", &EcoEngine::runTimingClosure,
+             "Run ECO closure loop: gate sizing + buffer insertion",
+             py::arg("design"), py::arg("timer"), py::arg("max_iter") = 10)
+        .def("fix_setup_violations", &EcoEngine::fixSetupViolations,
+             "Single-pass gate upsizing for setup", py::arg("design"), py::arg("timer"))
+        .def("fix_hold_violations", &EcoEngine::fixHoldViolations,
+             "Single-pass buffer insertion for hold", py::arg("design"), py::arg("timer"));
+
+    // 11. Expose TimingSummary struct
     py::class_<TimingSummary>(m, "TimingSummary")
         .def_readonly("wns",             &TimingSummary::wns)
         .def_readonly("tns",             &TimingSummary::tns)

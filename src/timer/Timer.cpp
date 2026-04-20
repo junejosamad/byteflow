@@ -393,10 +393,8 @@ void Timer::computeHoldChecks() {
         double holdTime = getHoldTime(node->pin->inst);
         // Hold required time: clock must have passed (latency) + hold window
         double holdRequired = clockLatency + holdTime + clockUncertainty;
-        node->holdSlack = node->arrivalTime - holdRequired;
-
-        // Write back to Pin for reporting
-        node->pin->slack = std::min(node->pin->slack, node->holdSlack);
+        node->holdSlack      = node->arrivalTime - holdRequired;
+        node->pin->holdSlack = node->holdSlack;  // write back for ECO engine
     }
 }
 

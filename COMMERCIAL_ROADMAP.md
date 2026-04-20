@@ -163,12 +163,13 @@
 - [ ] Crosstalk delay bump model (aggressor/victim)
 - [ ] SI-aware STA: add/subtract crosstalk delta to path delays
 
-### 3.4 ECO (Engineering Change Order) Flow
-- [ ] Gate sizing: upsize/downsize cells on critical paths without re-placement
-- [ ] Buffer insertion: fix long-wire delays on critical paths (fix existing bug first)
-- [ ] Hold fixing: insert delay buffers on hold-violating paths
-- [ ] Incremental STA update after ECO (no full re-run)
-- [ ] Timing closure loop: iterate ECO until WNS ≥ 0 and TNS = 0
+### 3.4 ECO (Engineering Change Order) Flow  **[x] COMPLETE**
+- [x] Gate sizing: upsize cells on critical paths without re-placement (`EcoEngine::fixSetupViolations`)
+- [x] Buffer insertion: insert delay buffers on hold-violating FF D-pins (`EcoEngine::fixHoldViolations`)
+- [x] Hold fixing: multi-pass buffer insertion converges hold WNS to 0 (shift_reg: -20ps → +18.2ps in 3 iterations)
+- [x] Timing closure loop: iterate ECO until WNS ≥ 0 and hold violations = 0 (`EcoEngine::runTimingClosure`)
+- [x] Python bindings: `EcoEngine`, `EcoResult` exposed; 21/21 tests passing (`tests/test_eco.py`)
+- [ ] Incremental STA update after ECO (no full re-run — currently rebuilds full graph)
 
 ### 3.5 Timing Reports
 - [ ] Full path report: startpoint → endpoint with per-gate delay breakdown
