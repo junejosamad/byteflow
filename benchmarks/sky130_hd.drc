@@ -1,0 +1,16 @@
+# OpenEDA DRC Rule Deck — SkyWater 130nm HD Standard Cells
+# Length values in nm; area values in nm²
+# Reference: sky130 design rules (simplified, non-commercial)
+
+layer 1 li1   min_width=170  min_spacing=170  min_area=56100
+layer 2 met1  min_width=140  min_spacing=140  min_area=83000
+layer 3 met2  min_width=140  min_spacing=140  min_area=67600
+layer 4 met3  min_width=300  min_spacing=300  min_area=90000
+layer 5 met4  min_width=300  min_spacing=300  min_area=90000
+layer 6 met5  min_width=1600 min_spacing=1600 min_area=900000
+
+via 1 2 mcon  enclosure=60   via_size=170
+via 2 3 via1  enclosure=55   via_size=150
+via 3 4 via2  enclosure=65   via_size=200
+via 4 5 via3  enclosure=65   via_size=200
+via 5 6 via4  enclosure=310  via_size=800

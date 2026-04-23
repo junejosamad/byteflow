@@ -19,6 +19,7 @@
 #include "analysis/SpefEngine.h"
 #include "analysis/EcoEngine.h"
 #include "analysis/TimingReporter.h"
+#include "analysis/DrcEngine.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -319,4 +320,70 @@ PYBIND11_MODULE(open_eda, m) {
              &TimingReporter::writeHtmlReport,
              "Write self-contained HTML sign-off page; returns True on success",
              py::arg("filename"));
+
+    // 13. DRC Engine — physical verification
+    py::enum_<DrcViolationType>(m, "DrcViolationType")
+        .value("SHORT",        DrcViolationType::SHORT)
+        .value("MIN_SPACING",  DrcViolationType::MIN_SPACING)
+        .value("MIN_WIDTH",    DrcViolationType::MIN_WIDTH)
+        .value("MIN_AREA",     DrcViolationType::MIN_AREA)
+        .value("VIA_ENCLOSURE",DrcViolationType::VIA_ENCLOSURE)
+        .export_values();
+
+    py::class_<DrcViolation>(m, "DrcViolation")
+        .def_readonly("type",    &DrcViolation::type)
+        .def_readonly("layer",   &DrcViolation::layer)
+        .def_readonly("x1",      &DrcViolation::x1)
+        .def_readonly("y1",      &DrcViolation::y1)
+        .def_readonly("x2",      &DrcViolation::x2)
+        .def_readonly("y2",      &DrcViolation::y2)
+        .def_readonly("net1",    &DrcViolation::net1)
+        .def_readonly("net2",    &DrcViolation::net2)
+        .def_readonly("message", &DrcViolation::message);
+
+    py::class_<LayerRule>(m, "LayerRule")
+        .def_readonly("layer_idx",   &LayerRule::layerIdx)
+        .def_readonly("name",        &LayerRule::name)
+        .def_readonly("min_width",   &LayerRule::minWidth)
+        .def_readonly("min_spacing", &LayerRule::minSpacing)
+        .def_readonly("min_area",    &LayerRule::minArea);
+
+    py::class_<ViaRule>(m, "ViaRule")
+        .def_readonly("from_layer",  &ViaRule::fromLayer)
+        .def_readonly("to_layer",    &ViaRule::toLayer)
+        .def_readonly("name",        &ViaRule::name)
+        .def_readonly("enclosure",   &ViaRule::enclosure)
+        .def_readonly("via_size",    &ViaRule::viaSize);
+
+    py::class_<DrcRuleDeck>(m, "DrcRuleDeck")
+        .def(py::init<>())
+        .def_static("sky130",        &DrcRuleDeck::sky130,
+                    "Return built-in sky130_hd rule deck")
+        .def("load_from_file",       &DrcRuleDeck::loadFromFile,
+             "Parse a .drc rule deck file (values in nm); returns True on success",
+             py::arg("filename"))
+        .def_readonly("layer_rules", &DrcRuleDeck::layerRules)
+        .def_readonly("via_rules",   &DrcRuleDeck::viaRules);
+
+    py::class_<DrcReport>(m, "DrcReport")
+        .def_readonly("violations",  &DrcReport::violations)
+        .def("total_count",   &DrcReport::totalCount,   "Total violation count")
+        .def("short_count",   &DrcReport::shortCount,   "Short circuit count")
+        .def("spacing_count", &DrcReport::spacingCount, "Min-spacing violation count")
+        .def("width_count",   &DrcReport::widthCount,   "Min-width violation count")
+        .def("area_count",    &DrcReport::areaCount,    "Min-area violation count")
+        .def("print",         &DrcReport::print,
+             "Print DRC summary to stdout",
+             py::arg("max_print") = 30);
+
+    py::class_<DrcEngine>(m, "DrcEngine")
+        .def(py::init<>())
+        .def("run_drc",
+             py::overload_cast<Design*>(&DrcEngine::runDrc),
+             "Run DRC with sky130 built-in rule deck",
+             py::arg("design"))
+        .def("run_drc",
+             py::overload_cast<Design*, const DrcRuleDeck&>(&DrcEngine::runDrc),
+             "Run DRC with a custom rule deck",
+             py::arg("design"), py::arg("rules"));
 }
