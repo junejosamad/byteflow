@@ -171,11 +171,13 @@
 - [x] Python bindings: `EcoEngine`, `EcoResult` exposed; 21/21 tests passing (`tests/test_eco.py`)
 - [ ] Incremental STA update after ECO (no full re-run — currently rebuilds full graph)
 
-### 3.5 Timing Reports
-- [ ] Full path report: startpoint → endpoint with per-gate delay breakdown
-- [ ] Slack histogram
-- [ ] Clock domain crossing (CDC) report
-- [ ] Export to HTML and text formats
+### 3.5 Timing Reports  **[x] COMPLETE**
+- [x] Full path report: startpoint → endpoint with per-gate delay + wire delay + incremental columns (`TimingReporter::getTopPaths`)
+- [x] Slack histogram: endpoint count per slack bucket, ASCII bar chart (`TimingReporter::getSlackHistogram`)
+- [x] Clock domain crossing (CDC) report: detects multi-domain FF handoffs (`TimingReporter::formatCdcReport`)
+- [x] Text export: full .rpt file with summary, top-N paths, histogram, endpoint table (`writeTextReport`)
+- [x] HTML export: self-contained styled sign-off page with collapsible paths, color-coded endpoints (`writeHtmlReport`)
+- [x] Python bindings: `TimingReporter`, `PathReport`, `PathStep`, `SlackBin` exposed; 63/63 tests passing (`tests/test_timing_reports.py`)
 
 ---
 

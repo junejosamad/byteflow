@@ -55,7 +55,10 @@ struct TimingSummary {
 // ============================================================
 // Timer: full STA with NLDM, Elmore RC, topo-sorted passes
 // ============================================================
+class TimingReporter;  // forward declaration for friend
+
 class Timer {
+    friend class TimingReporter;
 public:
     Timer(Design* design, Library* lib = nullptr, SpefEngine* spef = nullptr);
     ~Timer();

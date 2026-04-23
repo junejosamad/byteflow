@@ -18,6 +18,7 @@
 #include "floorplan/Floorplanner.h"
 #include "analysis/SpefEngine.h"
 #include "analysis/EcoEngine.h"
+#include "analysis/TimingReporter.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -254,4 +255,68 @@ PYBIND11_MODULE(open_eda, m) {
              "Print the critical path breakdown to stdout")
         .def("report_all_endpoints",&Timer::reportAllEndpoints,
              "Print slack for every timing endpoint");
+
+    // 12. TimingReporter — structured sign-off reports
+    py::class_<PathStep>(m, "PathStep")
+        .def_readonly("inst_name",    &PathStep::instName)
+        .def_readonly("pin_name",     &PathStep::pinName)
+        .def_readonly("cell_type",    &PathStep::cellType)
+        .def_readonly("gate_delay",   &PathStep::gateDelay)
+        .def_readonly("wire_delay",   &PathStep::wireDelay)
+        .def_readonly("arrival_time", &PathStep::arrivalTime)
+        .def_readonly("slack",        &PathStep::slack);
+
+    py::class_<PathReport>(m, "PathReport")
+        .def_readonly("startpoint",    &PathReport::startpoint)
+        .def_readonly("endpoint",      &PathReport::endpoint)
+        .def_readonly("type",          &PathReport::type)
+        .def_readonly("slack",         &PathReport::slack)
+        .def_readonly("arrival_time",  &PathReport::arrivalTime)
+        .def_readonly("required_time", &PathReport::requiredTime)
+        .def_readonly("steps",         &PathReport::steps);
+
+    py::class_<SlackBin>(m, "SlackBin")
+        .def_readonly("lo",    &SlackBin::lo)
+        .def_readonly("hi",    &SlackBin::hi)
+        .def_readonly("count", &SlackBin::count)
+        .def_readonly("label", &SlackBin::label);
+
+    py::class_<TimingReporter>(m, "TimingReporter")
+        .def(py::init([](Timer* t, Design* d) {
+            return new TimingReporter(*t, *d);
+        }), py::arg("timer"), py::arg("design"),
+            "Construct a reporter from a fully-updated Timer and its Design")
+        .def("get_top_paths",
+             &TimingReporter::getTopPaths,
+             "Return list of N worst-slack PathReport objects",
+             py::arg("n") = 5)
+        .def("get_slack_histogram",
+             &TimingReporter::getSlackHistogram,
+             "Return list of SlackBin objects (endpoint count per bucket)",
+             py::arg("bins") = 10)
+        .def("format_summary",
+             &TimingReporter::formatSummary,
+             "Return sign-off summary block as a string")
+        .def("format_path",
+             &TimingReporter::formatPath,
+             "Return formatted text breakdown for one PathReport",
+             py::arg("path"))
+        .def("format_slack_histogram",
+             &TimingReporter::formatSlackHistogram,
+             "Return ASCII bar-chart histogram as a string",
+             py::arg("bins") = 10)
+        .def("format_all_endpoints",
+             &TimingReporter::formatAllEndpoints,
+             "Return tabular endpoint slack table as a string")
+        .def("format_cdc_report",
+             &TimingReporter::formatCdcReport,
+             "Return clock domain crossing summary as a string")
+        .def("write_text_report",
+             &TimingReporter::writeTextReport,
+             "Write full .rpt text file; returns True on success",
+             py::arg("filename"))
+        .def("write_html_report",
+             &TimingReporter::writeHtmlReport,
+             "Write self-contained HTML sign-off page; returns True on success",
+             py::arg("filename"));
 }
