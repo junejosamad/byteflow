@@ -21,6 +21,7 @@
 #include "analysis/TimingReporter.h"
 #include "analysis/DrcEngine.h"
 #include "analysis/LvsEngine.h"
+#include "analysis/ErcEngine.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -433,5 +434,44 @@ PYBIND11_MODULE(open_eda, m) {
         .def(py::init<>())
         .def("run_lvs", &LvsEngine::runLvs,
              "Run LVS: placement, pin connectivity, net routing, physical coverage",
+             py::arg("design"));
+
+    // ── ERC Engine ───────────────────────────────────────────────
+    py::enum_<ErcViolationType>(m, "ErcViolationType")
+        .value("FLOATING_INPUT",  ErcViolationType::FLOATING_INPUT)
+        .value("MULTIPLE_DRIVER", ErcViolationType::MULTIPLE_DRIVER)
+        .value("NO_POWER_PIN",    ErcViolationType::NO_POWER_PIN)
+        .export_values();
+
+    py::class_<ErcViolation>(m, "ErcViolation")
+        .def_readonly("type",      &ErcViolation::type)
+        .def_readonly("inst_name", &ErcViolation::instName)
+        .def_readonly("net_name",  &ErcViolation::netName)
+        .def_readonly("pin_name",  &ErcViolation::pinName)
+        .def_readonly("message",   &ErcViolation::message);
+
+    py::class_<ErcReport>(m, "ErcReport")
+        .def_readonly("violations",      &ErcReport::violations)
+        .def_readonly("instance_count",  &ErcReport::instanceCount)
+        .def_readonly("net_count",       &ErcReport::netCount)
+        .def_readonly("pin_count",       &ErcReport::pinCount)
+        .def("clean",                &ErcReport::clean,
+             "True when there are no ERC violations")
+        .def("total_count",          &ErcReport::totalCount,
+             "Total number of ERC violations")
+        .def("floating_input_count", &ErcReport::floatingInputCount,
+             "Number of FLOATING_INPUT violations")
+        .def("multiple_driver_count",&ErcReport::multipleDriverCount,
+             "Number of MULTIPLE_DRIVER violations")
+        .def("no_power_pin_count",   &ErcReport::noPowerPinCount,
+             "Number of NO_POWER_PIN violations")
+        .def("print",                &ErcReport::print,
+             "Print ERC report to stdout",
+             py::arg("max_print") = 30);
+
+    py::class_<ErcEngine>(m, "ErcEngine")
+        .def(py::init<>())
+        .def("run_erc", &ErcEngine::runErc,
+             "Run ERC: floating inputs, multiple drivers, power pin connectivity",
              py::arg("design"));
 }
