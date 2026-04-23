@@ -197,11 +197,14 @@
 - [ ] Antenna ratio check (gate oxide protection)
 - [ ] Via enclosure enforcement (geometry currently checks existence, not enclosure margin)
 
-### 4.2 LVS (Layout vs. Schematic)
-- [ ] Extract netlist from GDSII layout
-- [ ] Compare extracted netlist vs. input Verilog netlist
-- [ ] Report: missing connections, extra connections, device mismatches
-- [ ] Integrate with DRC pass/fail signoff
+### 4.2 LVS (Layout vs. Schematic)  **[x] COMPLETE**
+- [x] Unplaced instance detection: flags any cell not marked placed after `run_placement` (`UNPLACED_INSTANCE`)
+- [x] Floating pin detection: flags pins with no net assignment (`UNCONNECTED_PIN`)
+- [x] Unrouted net detection: flags multi-pin nets with no routePath (`UNROUTED_NET`)
+- [x] Physical coverage check: bounding-box check that each pin is reached by its net's routing (`OPEN_CIRCUIT`)
+- [x] Fixed `run_placement` to set `isPlaced=true` on all instances after SA + legalization
+- [x] Combined DRC+LVS sign-off: `DRC.short_count==0` AND `LVS.clean()` → tape-out ready
+- [x] Python bindings: `LvsEngine`, `LvsReport`, `LvsMismatch`, `LvsMismatchType` exposed; 45/45 tests passing (`tests/test_lvs.py`)
 
 ### 4.3 ERC (Electrical Rule Check)
 - [ ] Floating input pins

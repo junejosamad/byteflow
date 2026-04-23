@@ -20,6 +20,7 @@
 #include "analysis/EcoEngine.h"
 #include "analysis/TimingReporter.h"
 #include "analysis/DrcEngine.h"
+#include "analysis/LvsEngine.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -32,6 +33,9 @@ void run_placement(Design* chip) {
     placer.runPlacement(*chip, chip->coreWidth, chip->coreHeight);
     Legalizer leg(chip, chip->coreWidth, chip->coreHeight);
     leg.run();
+    // Mark all instances as placed after SA + legalization complete
+    for (GateInstance* inst : chip->instances)
+        inst->isPlaced = true;
 }
 
 // Ensure the module name matches the target name in CMakeLists.txt (open_eda)
@@ -386,4 +390,48 @@ PYBIND11_MODULE(open_eda, m) {
              py::overload_cast<Design*, const DrcRuleDeck&>(&DrcEngine::runDrc),
              "Run DRC with a custom rule deck",
              py::arg("design"), py::arg("rules"));
+
+    // 14. LVS Engine — layout vs. schematic
+    py::enum_<LvsMismatchType>(m, "LvsMismatchType")
+        .value("UNPLACED_INSTANCE", LvsMismatchType::UNPLACED_INSTANCE)
+        .value("UNCONNECTED_PIN",   LvsMismatchType::UNCONNECTED_PIN)
+        .value("UNROUTED_NET",      LvsMismatchType::UNROUTED_NET)
+        .value("OPEN_CIRCUIT",      LvsMismatchType::OPEN_CIRCUIT)
+        .export_values();
+
+    py::class_<LvsMismatch>(m, "LvsMismatch")
+        .def_readonly("type",      &LvsMismatch::type)
+        .def_readonly("inst_name", &LvsMismatch::instName)
+        .def_readonly("net_name",  &LvsMismatch::netName)
+        .def_readonly("pin_name",  &LvsMismatch::pinName)
+        .def_readonly("message",   &LvsMismatch::message);
+
+    py::class_<LvsReport>(m, "LvsReport")
+        .def_readonly("mismatches",         &LvsReport::mismatches)
+        .def_readonly("instance_count",     &LvsReport::instanceCount)
+        .def_readonly("net_count",          &LvsReport::netCount)
+        .def_readonly("routed_net_count",   &LvsReport::routedNetCount)
+        .def_readonly("total_pin_count",    &LvsReport::totalPinCount)
+        .def_readonly("connected_pin_count",&LvsReport::connectedPinCount)
+        .def("clean",                &LvsReport::clean,
+             "True if no mismatches found")
+        .def("total_count",          &LvsReport::totalCount,
+             "Total mismatch count")
+        .def("unplaced_count",       &LvsReport::unplacedCount,
+             "Unplaced instance count")
+        .def("unconnected_pin_count",&LvsReport::unconnectedPinCount,
+             "Floating pin count")
+        .def("unrouted_count",       &LvsReport::unroutedCount,
+             "Unrouted net count")
+        .def("open_circuit_count",   &LvsReport::openCircuitCount,
+             "Open circuit count")
+        .def("print",                &LvsReport::print,
+             "Print LVS report to stdout",
+             py::arg("max_print") = 30);
+
+    py::class_<LvsEngine>(m, "LvsEngine")
+        .def(py::init<>())
+        .def("run_lvs", &LvsEngine::runLvs,
+             "Run LVS: placement, pin connectivity, net routing, physical coverage",
+             py::arg("design"));
 }
