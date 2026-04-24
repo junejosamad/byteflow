@@ -29,7 +29,8 @@ jobs:
         run: cmake --build build --config Release -j$(nproc)
 
       - name: Verify module is present
-        run: ls *.so 2>/dev/null || ls *.pyd 2>/dev/null || (echo "ERROR: open_eda module not found in project root" && exit 1)
+        run: |
+          ls *.so 2>/dev/null || ls *.pyd 2>/dev/null || (echo "ERROR: open_eda module not found in project root" && exit 1)
 
       - name: Run all tests
         env:
