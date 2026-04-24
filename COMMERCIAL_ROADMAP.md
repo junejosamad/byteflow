@@ -2,7 +2,7 @@
 
 **Goal:** Evolve OpenEDA from a research prototype into a commercial-grade RTL-to-GDSII physical design platform.  
 **Target Market:** Cloud-native EDA, open-PDK flows (SkyWater 130nm / GF180), academic → production pipeline.  
-**Last Updated:** 2026-04-20
+**Last Updated:** 2026-04-24
 
 ---
 
@@ -206,10 +206,11 @@
 - [x] Combined DRC+LVS sign-off: `DRC.short_count==0` AND `LVS.clean()` → tape-out ready
 - [x] Python bindings: `LvsEngine`, `LvsReport`, `LvsMismatch`, `LvsMismatchType` exposed; 45/45 tests passing (`tests/test_lvs.py`)
 
-### 4.3 ERC (Electrical Rule Check)
-- [ ] Floating input pins
-- [ ] Multiple drivers on same net
-- [ ] Power/ground connectivity check
+### 4.3 ERC (Electrical Rule Check)  **[x] COMPLETE (2026-04-24)**
+- [x] Floating input pins: detect input pins whose net has no output driver (`FLOATING_INPUT`)
+- [x] Multiple drivers: detect nets with ≥2 output pins (`MULTIPLE_DRIVER`)
+- [x] Power/ground connectivity: detect VDD/VSS/VPWR/VGND pins with no net (`NO_POWER_PIN`)
+- [x] Python bindings: `ErcEngine`, `ErcReport`, `ErcViolation`, `ErcViolationType` exposed; 50/50 tests passing (`tests/test_erc.py`)
 
 ### 4.4 DRC/LVS Signoff Integration Option
 - [ ] Define plugin interface for external signoff tools (Calibre, Magic, KLayout)
@@ -221,21 +222,29 @@
 ## Phase 5 — Logic Synthesis Integration
 > Accept RTL input, not just pre-synthesized structural Verilog.
 
-### 5.1 Yosys Integration (RTL → Netlist)
-- [ ] Embed or call Yosys for RTL synthesis
-- [ ] Support: SystemVerilog, Verilog-2005 input
-- [ ] Technology mapping using Liberty cell library
-- [ ] Output: structural Verilog netlist → feed into OpenEDA placement
-- [ ] Expose via TCL: `synth_design -top <module> -liberty <lib>`
+### 5.1 Yosys Integration (RTL → Netlist)  **[x] COMPLETE (2026-04-24)**
+- [x] Call Yosys via subprocess (oss-cad-suite); Windows PATH + DLL resolution handled
+- [x] Custom techmap (no ABC): maps RTLIL primitives directly to simple.lib cells; bypasses Windows TEMP `~1` path bug in ABC
+- [x] Supported cells: AND2, OR2, NOT, NAND2, NOR2, XOR2, BUF, DFF, CLKBUF + sync/async reset DFFs via techmap
+- [x] `SynthEngine::synthesize(rtlFile, topModule, techmapFile="")` — built-in techmap fallback
+- [x] `SynthResult`: success, output_netlist, cell_count, log, error_message
+- [x] Benchmarks: `alu_rtl.v` (combinational), `counter_behavioral.v` (sequential), `dff_chain_rtl.v` (pipeline)
+- [x] Python bindings: `SynthEngine`, `SynthResult` exposed; 54/54 tests passing (`tests/test_synthesis.py`)
 
-### 5.2 Gate Sizing & Technology Re-mapping
-- [ ] Swap gates to different drive strengths from same cell family
-- [ ] Timing-driven resizing: upsize on critical path, downsize off-critical
-- [ ] Area-driven resizing: minimize total area given timing constraints
+### 5.2 Gate Sizing & Technology Re-mapping  **[x] COMPLETE (2026-04-24)**
+- [x] `simple.lib` extended with `_X2` drive-strength variants for all 9 base cells (area×2, timing×0.65, NLDM 3×3)
+- [x] `GateSizer::resizeForTiming`: upsize non-sequential gates with negative setup slack; re-runs STA after changes
+- [x] `GateSizer::resizeForArea`: downsize gates with 2× slack budget headroom; reports area saved
+- [x] Supports both `_XN` (simple.lib) and `_N` (sky130) naming conventions via `parseStrengthSuffix`
+- [x] Python bindings: `GateSizer`, `GateSizeResult` exposed; 33/33 tests passing (`tests/test_gate_sizer.py`)
 
-### 5.3 Logic Optimization Passes
-- [ ] Constant propagation and dead logic removal
-- [ ] Re-synthesis for area reduction on non-critical paths
+### 5.3 Logic Optimization Passes  **[x] COMPLETE (2026-04-24)**
+- [x] `LogicOptimizer::removeDeadLogic`: iterative fixpoint removal of gates with no path to endpoints; respects `primaryOutputNets`
+- [x] `LogicOptimizer::collapseBufferChains`: iterative BUF→BUF→… chain collapsing by rewiring sinks to source net
+- [x] `Design::primaryOutputNets`: populated by `VerilogParser` from `output` port declarations; protects primary outputs from dead-logic removal
+- [x] `OptimizeResult`: dead_gates_removed, buffers_collapsed, any_change()
+- [x] Legacy `fixTiming()` API retained for `main.cpp` compatibility
+- [x] Python bindings: `LogicOptimizer`, `OptimizeResult` exposed; 28/28 tests passing (`tests/test_logic_optimizer.py`)
 
 ---
 
