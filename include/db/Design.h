@@ -62,15 +62,23 @@ struct Pin {
     }
 };
 
+// Bounding-box hint produced by GlobalRouter; used by A* to clamp its search space.
+struct RouteGuide {
+    double xMin = 0, yMin = 0, xMax = 0, yMax = 0;
+    int    preferredLayer = 1;  // 1=horizontal (Metal1), 2=vertical (Metal2)
+};
+
 // A Net is a Wire
-// Update the Net class
 class Net {
 public:
     std::string name;
     std::vector<Pin*> connectedPins;
 
-    // NEW: The physical path (List of grid coordinates)
+    // Physical path set by the detailed router
     std::vector<Point> routePath;
+
+    // Bounding-box guides from global router; empty until GlobalRouter::route() runs
+    std::vector<RouteGuide> routeGuides;
 
     Net(std::string n) : name(n) {}
 };

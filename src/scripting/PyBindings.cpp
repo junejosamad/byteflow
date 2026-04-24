@@ -1,5 +1,6 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <fstream>
 
 // Include core headers
 #include "db/Design.h"
@@ -26,6 +27,7 @@
 #include "synthesis/SynthEngine.h"
 #include "synthesis/GateSizer.h"
 #include "parser/SdcParser.h"
+#include "route/GlobalRouter.h"
 
 namespace py = pybind11;
 
@@ -57,15 +59,31 @@ PYBIND11_MODULE(open_eda, m) {
         .def("load_pdk", [](Design& d,
                              const std::string& libertyPath,
                              const std::string& lefPath) {
-            // Allocate a persistent library on the heap
+            // Validate Liberty file (required)
+            {
+                std::ifstream chk(libertyPath);
+                if (!chk.is_open())
+                    throw std::runtime_error("load_pdk: Liberty file not found: " + libertyPath);
+            }
+            // Validate LEF file only when a non-empty path is provided
+            if (!lefPath.empty()) {
+                std::ifstream chk(lefPath);
+                if (!chk.is_open())
+                    throw std::runtime_error("load_pdk: LEF file not found: " + lefPath);
+            }
+
             Library* lib = new Library();
             d.cellLibrary = lib;
 
             LibertyParser libParser;
             libParser.parse(libertyPath, *lib);
+            if (lib->cells.empty())
+                throw std::runtime_error("load_pdk: No cells parsed from Liberty: " + libertyPath);
 
-            LefParser lefParser;
-            lefParser.parse(lefPath, &d);
+            if (!lefPath.empty()) {
+                LefParser lefParser;
+                lefParser.parse(lefPath, &d);
+            }
 
             py::print("[PDK] Loaded", (int)lib->cells.size(), "cells from", libertyPath);
         })
@@ -138,7 +156,7 @@ PYBIND11_MODULE(open_eda, m) {
                 d.coreWidth  = coreSize;
                 d.coreHeight = coreSize;
             } else {
-                py::print("Failed to load netlist from", filename);
+                throw std::runtime_error("load_verilog: Failed to parse netlist: " + filename);
             }
         });
 
@@ -538,4 +556,42 @@ PYBIND11_MODULE(open_eda, m) {
              py::arg("design"), py::arg("timer"),
              py::arg("slack_budget_ps") = 100.0,
              py::arg("max_changes") = 50);
+
+    // ── Global Router (Phase 1.2) ─────────────────────────────────────────
+    py::class_<RouteGuide>(m, "RouteGuide")
+        .def_readonly("x_min",            &RouteGuide::xMin)
+        .def_readonly("y_min",            &RouteGuide::yMin)
+        .def_readonly("x_max",            &RouteGuide::xMax)
+        .def_readonly("y_max",            &RouteGuide::yMax)
+        .def_readonly("preferred_layer",  &RouteGuide::preferredLayer);
+
+    py::class_<GCell>(m, "GCell")
+        .def_readonly("h_usage",    &GCell::hUsage)
+        .def_readonly("v_usage",    &GCell::vUsage)
+        .def_readonly("h_capacity", &GCell::hCapacity)
+        .def_readonly("v_capacity", &GCell::vCapacity)
+        .def_readonly("h_hist_cost",&GCell::hHistCost)
+        .def_readonly("v_hist_cost",&GCell::vHistCost);
+
+    py::class_<GRouteResult>(m, "GRouteResult")
+        .def_readonly("nets_routed",     &GRouteResult::netsRouted)
+        .def_readonly("total_overflow",  &GRouteResult::totalOverflow)
+        .def_readonly("overflow_cells",  &GRouteResult::overflowCells)
+        .def_readonly("routability",     &GRouteResult::routability)
+        .def_readonly("unrouted_nets",   &GRouteResult::unroutedNets);
+
+    py::class_<GlobalRouter>(m, "GlobalRouter")
+        .def(py::init<>())
+        .def("route",
+             &GlobalRouter::route,
+             "Run global routing: MST + Dijkstra on GCell grid, iterative congestion relief",
+             py::arg("design"),
+             py::arg("gcells_x") = 10,
+             py::arg("gcells_y") = 10,
+             py::arg("max_iter") = 3)
+        .def("gcells_x", &GlobalRouter::gcellsX, "Number of GCells in X dimension")
+        .def("gcells_y", &GlobalRouter::gcellsY, "Number of GCells in Y dimension")
+        .def("gcell",    &GlobalRouter::gcell,
+             "Return GCell at (row, col)",
+             py::arg("row"), py::arg("col"));
 }
