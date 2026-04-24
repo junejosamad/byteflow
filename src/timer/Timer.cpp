@@ -399,6 +399,125 @@ void Timer::computeHoldChecks() {
 }
 
 // ============================================================
+// 6c. Incremental STA — skip graph rebuild (Phase 3.4)
+// ============================================================
+
+// Re-run all three propagation passes without touching the graph structure.
+// Use this after gate resizes: the cell type changes affect delay but not topology.
+void Timer::updateTimingSkipBuild() {
+    if (nodes.empty()) {
+        // Graph was never built — fall back to a full build
+        buildGraph();
+    }
+    // Apply any SDC overrides (same as updateTiming)
+    if (design && !design->sdc.empty()) {
+        const ClockDef* clk = design->sdc.primaryClock();
+        if (clk) {
+            clockPeriod      = clk->period_ps;
+            clockUncertainty = clk->uncertainty_ps  > 0 ? clk->uncertainty_ps
+                                                        : design->sdc.globalClockUncertainty_ps;
+            clockLatency     = clk->latency_ps      > 0 ? clk->latency_ps
+                                                        : design->sdc.globalClockLatency_ps;
+        }
+    }
+    propagateArrivalTimes();
+    propagateRequiredTimes();
+    computeHoldChecks();
+    calculateSlack();
+}
+
+// Patch the timing graph for a newly-added GateInstance (e.g. inserted buffer).
+// Algorithm:
+//   1. Collect all nets connected to newInst's pins (affected nets).
+//   2. For each pin on those nets, clear its parent/child arc lists (remove stale arcs).
+//   3. Rebuild arcs from current netlist state for those nets — same logic as buildGraph.
+//   4. Recompute topological order.
+void Timer::patchGraph(GateInstance* newInst) {
+    if (!newInst) return;
+
+    // --- Step 1: collect affected nets ---
+    std::unordered_set<Net*> affectedNets;
+    for (Pin* p : newInst->pins)
+        if (p->net) affectedNets.insert(p->net);
+
+    if (affectedNets.empty()) return;
+
+    // Collect all pins on affected nets (includes existing + new pins)
+    std::unordered_set<Pin*> affectedPins;
+    for (Net* net : affectedNets)
+        for (Pin* p : net->connectedPins)
+            affectedPins.insert(p);
+    // Also include the new instance's own pins
+    for (Pin* p : newInst->pins) affectedPins.insert(p);
+
+    // --- Step 2: create nodes for new instance's pins ---
+    for (Pin* p : newInst->pins) {
+        if (pinToNode.count(p) == 0) {
+            TimingNode* node = new TimingNode(p);
+            nodes.push_back(node);
+            pinToNode[p] = node;
+        }
+    }
+
+    // --- Step 3: clear arcs on affected nodes (both sides of each arc) ---
+    for (Pin* p : affectedPins) {
+        auto it = pinToNode.find(p);
+        if (it == pinToNode.end()) continue;
+        TimingNode* node = it->second;
+
+        // Remove this node from all children's parent lists
+        for (TimingNode* child : node->children)
+            child->parents.erase(
+                std::remove(child->parents.begin(), child->parents.end(), node),
+                child->parents.end());
+        // Remove this node from all parents' child lists
+        for (TimingNode* parent : node->parents)
+            parent->children.erase(
+                std::remove(parent->children.begin(), parent->children.end(), node),
+                parent->children.end());
+
+        node->children.clear();
+        node->parents.clear();
+    }
+
+    // --- Step 4: rebuild arcs for affected nets (mirrors buildGraph logic) ---
+    for (Net* net : affectedNets) {
+        Pin* driver = nullptr;
+        std::vector<Pin*> loads;
+        for (Pin* p : net->connectedPins) {
+            if (p->type == PinType::OUTPUT) driver = p;
+            else loads.push_back(p);
+        }
+        if (!driver) continue;
+
+        auto driverIt = pinToNode.find(driver);
+        if (driverIt == pinToNode.end()) continue;
+        TimingNode* driverNode = driverIt->second;
+
+        // Net arcs: driver → each load
+        for (Pin* load : loads) {
+            auto loadIt = pinToNode.find(load);
+            if (loadIt == pinToNode.end()) continue;
+            driverNode->children.push_back(loadIt->second);
+            loadIt->second->parents.push_back(driverNode);
+        }
+
+        // Cell arcs: driver's gate inputs → driver output
+        GateInstance* inst = driver->inst;
+        for (Pin* inp : inst->pins) {
+            if (inp->type != PinType::INPUT) continue;
+            auto inpIt = pinToNode.find(inp);
+            if (inpIt == pinToNode.end()) continue;
+            inpIt->second->children.push_back(driverNode);
+            driverNode->parents.push_back(inpIt->second);
+        }
+    }
+
+    // --- Step 5: recompute topological order ---
+    computeTopologicalOrder();
+}
+
+// ============================================================
 // 7. Master Update — apply SDC constraints if loaded
 // ============================================================
 void Timer::updateTiming() {

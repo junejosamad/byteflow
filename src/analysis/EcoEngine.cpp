@@ -199,26 +199,41 @@ int EcoEngine::fixHoldViolations(Design* chip, Timer& timer) {
                   << "/D  (hold_slack=" << std::fixed << std::setprecision(1)
                   << p->holdSlack << " ps, need +" << deficit << " ps)\n";
         GateInstance* buf = insertBuffer(chip, p, bufDef, ecoSeq);
-        if (buf) inserted++;
+        if (buf) {
+            inserted++;
+            lastInserted_.push_back(buf);  // tracked for patchGraph
+        }
     }
     return inserted;
 }
 
 // ============================================================
-// Timing closure loop
+// Timing closure loop — Phase 3.4: incremental STA
 // ============================================================
+//
+// Previous implementation: called buildGraph() + updateTiming() on every
+// iteration = O(N) node allocation per iteration.
+//
+// New implementation:
+//   - Initial build: buildGraph() + updateTiming()  (once)
+//   - After gate resize: updateTimingSkipBuild()     (no node allocation)
+//   - After buffer insert: patchGraph(buf) + updateTimingSkipBuild()
+//   - Final verification: buildGraph() + updateTiming() (once, for accuracy)
+//
+// Total full rebuilds: 2 regardless of maxIter.
 
 EcoResult EcoEngine::runTimingClosure(Design* chip, Timer& timer, int maxIter) {
     EcoResult result;
 
     std::cout << "\n=== ECO TIMING CLOSURE ===\n";
 
+    // Initial full build
+    timer.buildGraph();
+    timer.updateTiming();
+    ++result.fullRebuildCount;
+
     for (int iter = 0; iter < maxIter; iter++) {
         result.iterations++;
-
-        // Rebuild graph + rerun STA
-        timer.buildGraph();
-        timer.updateTiming();
 
         double setupWns = timer.getWNS();
         double holdWns  = timer.getHoldWNS();
@@ -237,8 +252,29 @@ EcoResult EcoEngine::runTimingClosure(Design* chip, Timer& timer, int maxIter) {
         }
 
         int changed = 0;
-        if (setupV > 0) changed += fixSetupViolations(chip, timer);
-        if (holdV  > 0) changed += fixHoldViolations(chip, timer);
+
+        if (setupV > 0) {
+            int resized = fixSetupViolations(chip, timer);
+            if (resized > 0) {
+                // Gate resize only: topology unchanged → skip graph rebuild
+                timer.updateTimingSkipBuild();
+                ++result.incrUpdateCount;
+                changed += resized;
+            }
+        }
+
+        if (holdV > 0) {
+            lastInserted_.clear();
+            int inserted = fixHoldViolations(chip, timer);
+            if (inserted > 0) {
+                // Buffer insertion: patch newly-added nodes, then re-propagate
+                for (GateInstance* buf : lastInserted_)
+                    timer.patchGraph(buf);
+                timer.updateTimingSkipBuild();
+                ++result.incrUpdateCount;
+                changed += inserted;
+            }
+        }
 
         result.setupFixed += changed;
 
@@ -248,9 +284,10 @@ EcoResult EcoEngine::runTimingClosure(Design* chip, Timer& timer, int maxIter) {
         }
     }
 
-    // Final STA for accurate result
+    // Final full rebuild for verified result (catches any edge-case drift)
     timer.buildGraph();
     timer.updateTiming();
+    ++result.fullRebuildCount;
 
     result.finalSetupWns   = timer.getWNS();
     result.finalHoldWns    = timer.getHoldWNS();
@@ -260,6 +297,8 @@ EcoResult EcoEngine::runTimingClosure(Design* chip, Timer& timer, int maxIter) {
     std::cout << "=== ECO COMPLETE: setup_wns=" << result.finalSetupWns
               << " ps  hold_wns=" << result.finalHoldWns << " ps"
               << "  total_changes=" << result.setupFixed + result.holdFixed
+              << "  rebuilds=" << result.fullRebuildCount
+              << "  incr_updates=" << result.incrUpdateCount
               << " ===\n";
 
     return result;

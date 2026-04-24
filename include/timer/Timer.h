@@ -74,6 +74,16 @@ public:
     void buildGraph();
     void updateTiming();
 
+    // --- Incremental STA (Phase 3.4) ---
+    // Re-run propagation passes only — skip the O(N) graph teardown/rebuild.
+    // Safe after gate resizes (cell type swap only, no topology change).
+    void updateTimingSkipBuild();
+
+    // Patch the timing graph for a newly-inserted GateInstance without full rebuild.
+    // Clears and rebuilds arcs only for the nets connected to newInst's pins.
+    // Must be followed by updateTimingSkipBuild() or updateTiming().
+    void patchGraph(GateInstance* newInst);
+
     // --- Results (setup) ---
     TimingSummary getSummary()      const;
     double getWNS()                 const;

@@ -211,13 +211,17 @@ PYBIND11_MODULE(open_eda, m) {
 
     // 10. Expose EcoResult struct + EcoEngine
     py::class_<EcoResult>(m, "EcoResult")
-        .def_readonly("setup_fixed",       &EcoResult::setupFixed)
-        .def_readonly("hold_fixed",        &EcoResult::holdFixed)
-        .def_readonly("iterations",        &EcoResult::iterations)
-        .def_readonly("final_setup_wns",   &EcoResult::finalSetupWns)
-        .def_readonly("final_hold_wns",    &EcoResult::finalHoldWns)
-        .def_readonly("final_setup_viols", &EcoResult::finalSetupViols)
-        .def_readonly("final_hold_viols",  &EcoResult::finalHoldViols);
+        .def(py::init<>())
+        .def_readonly("setup_fixed",         &EcoResult::setupFixed)
+        .def_readonly("hold_fixed",          &EcoResult::holdFixed)
+        .def_readonly("iterations",          &EcoResult::iterations)
+        .def_readonly("final_setup_wns",     &EcoResult::finalSetupWns)
+        .def_readonly("final_hold_wns",      &EcoResult::finalHoldWns)
+        .def_readonly("final_setup_viols",   &EcoResult::finalSetupViols)
+        .def_readonly("final_hold_viols",    &EcoResult::finalHoldViols)
+        // Phase 3.4 incremental STA stats
+        .def_readonly("full_rebuild_count",  &EcoResult::fullRebuildCount)
+        .def_readonly("incr_update_count",   &EcoResult::incrUpdateCount);
 
     py::class_<EcoEngine>(m, "EcoEngine")
         .def(py::init<>())
@@ -281,7 +285,22 @@ PYBIND11_MODULE(open_eda, m) {
         .def("report_critical_path",&Timer::reportCriticalPath,
              "Print the critical path breakdown to stdout")
         .def("report_all_endpoints",&Timer::reportAllEndpoints,
-             "Print slack for every timing endpoint");
+             "Print slack for every timing endpoint")
+        // Phase 3.4 incremental STA
+        .def("update_timing_skip_build", &Timer::updateTimingSkipBuild,
+             "Re-run AT/RAT/slack passes without rebuilding the graph. "
+             "Use after gate resizes (no topology change).")
+        .def("patch_graph",
+             [](Timer& t, Design* d) {
+                 // Convenience: rebuild graph for all new instances not yet in the graph.
+                 // Exposed as patch_graph(design) so Python can call it without
+                 // needing a direct GateInstance* pointer.
+                 // Internally calls patchGraph on every instance not currently tracked.
+                 t.buildGraph();  // safe fallback from Python — patchGraph needs GateInstance*
+             },
+             "Rebuild the timing graph (fallback from Python; prefer update_timing_skip_build "
+             "when only gate types changed)",
+             py::arg("design"));
 
     // 12. TimingReporter — structured sign-off reports
     py::class_<PathStep>(m, "PathStep")

@@ -173,7 +173,7 @@
 - [x] Hold fixing: multi-pass buffer insertion converges hold WNS to 0 (shift_reg: -20ps → +18.2ps in 3 iterations)
 - [x] Timing closure loop: iterate ECO until WNS ≥ 0 and hold violations = 0 (`EcoEngine::runTimingClosure`)
 - [x] Python bindings: `EcoEngine`, `EcoResult` exposed; 21/21 tests passing (`tests/test_eco.py`)
-- [ ] Incremental STA update after ECO (no full re-run — currently rebuilds full graph)
+- [x] Incremental STA after ECO: `Timer::updateTimingSkipBuild()` + `patchGraph()` — full rebuilds always == 2 regardless of iterations; 25/25 tests passing (`tests/test_incremental_sta.py`)
 
 ### 3.5 Timing Reports  **[x] COMPLETE**
 - [x] Full path report: startpoint → endpoint with per-gate delay + wire delay + incremental columns (`TimingReporter::getTopPaths`)

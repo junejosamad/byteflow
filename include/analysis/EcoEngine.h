@@ -25,6 +25,9 @@ struct EcoResult {
     double finalHoldWns    = 0.0;  // ps
     int    finalSetupViols = 0;
     int    finalHoldViols  = 0;
+    // Phase 3.4 incremental STA stats
+    int    fullRebuildCount   = 0;  // number of buildGraph() calls
+    int    incrUpdateCount    = 0;  // number of updateTimingSkipBuild() calls
 };
 
 class EcoEngine {
@@ -60,4 +63,7 @@ private:
                                 int& seqId);
 
     int ecoSeq = 0;  // counter for unique ECO instance/net names
+
+    // Phase 3.4: track newly-inserted buffers so runTimingClosure can patch the graph
+    std::vector<GateInstance*> lastInserted_;
 };
