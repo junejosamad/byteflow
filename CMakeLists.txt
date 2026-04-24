@@ -12,23 +12,10 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 # Automatically find all C++ source files in the src/ directory and subdirectories
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 
-# --- PHASE 3: GUI Dependencies (GLFW & OpenGL) ---
-find_package(OpenGL REQUIRED)
-
-include(FetchContent)
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.3.8
-)
-# Disable GLFW bloat
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(glfw)
-
 # --- PHASE 4: Python Scripting Shell (Pybind11) ---
 option(BUILD_PYTHON_MODULE "Build OpenEDA as a Python module" OFF)
+
+include(FetchContent)
 
 if(BUILD_PYTHON_MODULE)
     FetchContent_Declare(
@@ -38,10 +25,12 @@ if(BUILD_PYTHON_MODULE)
     )
     FetchContent_MakeAvailable(pybind11)
 
-    # Remove main.cpp so there is no duplicate main()
+    # Exclude GUI and main — Python module is headless
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
-    
-    # Build as a dynamic python library
+    file(GLOB_RECURSE GUI_SOURCES "src/gui/*.cpp")
+    list(REMOVE_ITEM SOURCES ${GUI_SOURCES})
+
+    # Build as a dynamic python library (no GLFW/OpenGL needed)
     pybind11_add_module(open_eda ${SOURCES})
 
     # Automatically copy the compiled .pyd / .so to the project root for testing
@@ -56,13 +45,22 @@ else()
 
     # Define the standalone executable
     add_executable(open_eda ${SOURCES})
+
+    # Link GUI libraries for the standalone app
+    find_package(OpenGL REQUIRED)
+    FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.3.8
+    )
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glfw)
+    target_link_libraries(open_eda PRIVATE glfw OpenGL::GL)
 endif()
 
-# Link GUI libraries
-target_link_libraries(open_eda PRIVATE glfw OpenGL::GL)
-
 # --- PREPARING FOR PHASE 2: MULTITHREADING ---
-# Find OpenMP to allow parallel routing and placement in the future
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(open_eda PUBLIC OpenMP::OpenMP_CXX)

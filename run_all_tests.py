@@ -6,7 +6,11 @@ Usage:
     python run_all_tests.py
     python run_all_tests.py --stop-on-fail   # stop after first failing suite
 """
-import sys, os, subprocess, argparse, time
+import sys, os, subprocess, argparse, time, copy
+# Force UTF-8 output on Windows (handles unicode box-drawing chars in test output)
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.join(ROOT, "tests")
@@ -19,11 +23,14 @@ def find_test_files():
     return [os.path.join(TESTS_DIR, f) for f in files]
 
 def run_test(path):
+    env = copy.copy(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
     t0 = time.time()
     result = subprocess.run(
         [sys.executable, path],
         capture_output=False,
         cwd=ROOT,
+        env=env,
     )
     elapsed = time.time() - t0
     return result.returncode == 0, elapsed

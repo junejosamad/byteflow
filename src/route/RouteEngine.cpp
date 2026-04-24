@@ -1,5 +1,7 @@
 #include "route/RouteEngine.h"
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <iostream>
 #include <vector>
 #include <queue>
@@ -28,7 +30,9 @@ inline int getIdx(int x, int y, int l, int gridH, int gridL) {
 }
 
 void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
+#ifdef _OPENMP
     omp_set_num_threads(std::min(omp_get_max_threads(), 4));
+#endif
     gridW = gridW + 60;
     gridH = gridH + 60;
     int gridL = 7;   // Layers 0, 1, 2, 3, 4, 5, 6 (M1 through M6 where 0 is unused)

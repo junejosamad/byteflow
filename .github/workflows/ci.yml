@@ -19,9 +19,6 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             cmake python3 python3-dev \
-            libgl1-mesa-dev libglu1-mesa-dev \
-            libx11-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev libxext-dev \
             yosys \
             build-essential
 
@@ -35,4 +32,6 @@ jobs:
         run: ls *.so 2>/dev/null || ls *.pyd 2>/dev/null || (echo "ERROR: open_eda module not found in project root" && exit 1)
 
       - name: Run all tests
+        env:
+          PYTHONIOENCODING: utf-8
         run: python3 run_all_tests.py

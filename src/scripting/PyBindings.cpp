@@ -10,7 +10,7 @@
 #include "parser/VerilogParser.h"
 #include "place/PlaceEngine.h"
 #include "route/RouteEngine.h"
-#include "gui/GuiEngine.h"
+// GuiEngine excluded from Python module (headless build)
 #include "timer/Timer.h"
 #include "cts/CtsEngine.h"
 #include "route/PdnGenerator.h"
@@ -168,17 +168,6 @@ PYBIND11_MODULE(open_eda, m) {
         .def(py::init<>())
         .def("route", [](RouteEngine& router, Design* chip) {
             if (chip) router.runRouting(*chip, static_cast<int>(chip->coreWidth), static_cast<int>(chip->coreHeight));
-        });
-
-    // 4. Expose GuiEngine Class
-    py::class_<GuiEngine>(m, "GuiEngine")
-        .def(py::init<>())
-        .def("show", [](GuiEngine& gui, Design* chip, RouteEngine* router, CtsEngine* ctsEngine) {
-            if (gui.init(1280, 720, "Byteflow Visualizer (Python Shell)")) {
-                gui.run(chip, router, ctsEngine);
-            } else {
-                py::print("[Error] Failed to initialize hardware-accelerated GUI.");
-            }
         });
 
     // 5. Expose CtsEngine Class (Clock Tree Synthesis)
