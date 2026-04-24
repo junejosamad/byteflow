@@ -22,6 +22,7 @@
 #include "analysis/DrcEngine.h"
 #include "analysis/LvsEngine.h"
 #include "analysis/ErcEngine.h"
+#include "synthesis/SynthEngine.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -474,4 +475,26 @@ PYBIND11_MODULE(open_eda, m) {
         .def("run_erc", &ErcEngine::runErc,
              "Run ERC: floating inputs, multiple drivers, power pin connectivity",
              py::arg("design"));
+
+    // ── Synthesis Engine ─────────────────────────────────────────
+    py::class_<SynthResult>(m, "SynthResult")
+        .def_readonly("success",        &SynthResult::success)
+        .def_readonly("output_netlist", &SynthResult::outputNetlist)
+        .def_readonly("cell_count",     &SynthResult::cellCount)
+        .def_readonly("log",            &SynthResult::log)
+        .def_readonly("error_message",  &SynthResult::errorMessage);
+
+    py::class_<SynthEngine>(m, "SynthEngine")
+        .def(py::init<>())
+        .def("synthesize", &SynthEngine::synthesize,
+             "Synthesize RTL Verilog to structural netlist using Yosys",
+             py::arg("rtl_file"),
+             py::arg("top_module"),
+             py::arg("techmap_file") = "")
+        .def("is_available",  &SynthEngine::isAvailable,
+             "True if yosys is found in the environment")
+        .def("get_version",   &SynthEngine::getVersion,
+             "Return the Yosys version string")
+        .def("get_yosys_path",&SynthEngine::getYosysPath,
+             "Return the absolute path to the yosys binary");
 }
