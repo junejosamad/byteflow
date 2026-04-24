@@ -22,7 +22,9 @@
 #include "analysis/DrcEngine.h"
 #include "analysis/LvsEngine.h"
 #include "analysis/ErcEngine.h"
+#include "analysis/LogicOptimizer.h"
 #include "synthesis/SynthEngine.h"
+#include "synthesis/GateSizer.h"
 #include "parser/SdcParser.h"
 
 namespace py = pybind11;
@@ -476,6 +478,26 @@ PYBIND11_MODULE(open_eda, m) {
              "Run ERC: floating inputs, multiple drivers, power pin connectivity",
              py::arg("design"));
 
+    // ── Logic Optimizer ──────────────────────────────────────────
+    py::class_<OptimizeResult>(m, "OptimizeResult")
+        .def_readonly("dead_gates_removed", &OptimizeResult::deadGatesRemoved)
+        .def_readonly("buffers_collapsed",  &OptimizeResult::buffersCollapsed)
+        .def_readonly("nets_removed",       &OptimizeResult::netsRemoved)
+        .def_readonly("change_log",         &OptimizeResult::changeLog)
+        .def("any_change", &OptimizeResult::anyChange);
+
+    py::class_<LogicOptimizer>(m, "LogicOptimizer")
+        .def(py::init<>())
+        .def("optimize", &LogicOptimizer::optimize,
+             "Run dead-logic removal + buffer-chain collapsing",
+             py::arg("design"))
+        .def("remove_dead_logic", &LogicOptimizer::removeDeadLogic,
+             "Remove gates with no path to any endpoint; returns count removed",
+             py::arg("design"))
+        .def("collapse_buffer_chains", &LogicOptimizer::collapseBufferChains,
+             "Collapse consecutive BUF chains; returns buffers removed",
+             py::arg("design"));
+
     // ── Synthesis Engine ─────────────────────────────────────────
     py::class_<SynthResult>(m, "SynthResult")
         .def_readonly("success",        &SynthResult::success)
@@ -497,4 +519,23 @@ PYBIND11_MODULE(open_eda, m) {
              "Return the Yosys version string")
         .def("get_yosys_path",&SynthEngine::getYosysPath,
              "Return the absolute path to the yosys binary");
+
+    // ── Gate Sizer ───────────────────────────────────────────────
+    py::class_<GateSizeResult>(m, "GateSizeResult")
+        .def_readonly("cells_upsized",          &GateSizeResult::cellsUpsized)
+        .def_readonly("cells_downsized",        &GateSizeResult::cellsDownsized)
+        .def_readonly("timing_improvement_ps",  &GateSizeResult::timingImprovementPs)
+        .def_readonly("area_saved_units",       &GateSizeResult::areaSavedUnits)
+        .def_readonly("resize_log",             &GateSizeResult::resizeLog);
+
+    py::class_<GateSizer>(m, "GateSizer")
+        .def(py::init<>())
+        .def("resize_for_timing", &GateSizer::resizeForTiming,
+             "Upsize critical-path gates to improve WNS",
+             py::arg("design"), py::arg("timer"), py::arg("max_changes") = 50)
+        .def("resize_for_area", &GateSizer::resizeForArea,
+             "Downsize over-driven gates to save area while preserving slack",
+             py::arg("design"), py::arg("timer"),
+             py::arg("slack_budget_ps") = 100.0,
+             py::arg("max_changes") = 50);
 }

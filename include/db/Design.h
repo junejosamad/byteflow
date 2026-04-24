@@ -3,6 +3,8 @@
 #include <vector>
 #include <iostream>
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include "Library.h"
 #include "parser/SdcParser.h"
 
@@ -113,6 +115,10 @@ public:
     double coreHeight = 0.0;
 
     SdcConstraints sdc;  // loaded by read_sdc(); consumed by Timer
+
+    // Net names that are primary output ports of the top module.
+    // Populated by VerilogParser; used by LogicOptimizer to detect live outputs.
+    std::unordered_set<std::string> primaryOutputNets;
 
     void addInstance(GateInstance* inst) {
         instances.push_back(inst);

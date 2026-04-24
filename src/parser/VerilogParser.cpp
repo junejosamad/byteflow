@@ -44,6 +44,13 @@ bool VerilogParser::read(std::string filename, Design& design, Library& lib) {
         if (std::regex_search(segment, match, moduleRegex)) {
             design.name = match[1];
             std::cout << "  Found Module: " << design.name << "\n";
+            // Extract output port names from module header / body declarations.
+            // Handles both "output portName" and "output [N:0] portName" forms.
+            std::regex outPortRegex(R"(\boutput\b\s+(?:\[[^\]]*\]\s+)?(\w+))");
+            auto it  = std::sregex_iterator(segment.begin(), segment.end(), outPortRegex);
+            auto end = std::sregex_iterator();
+            for (; it != end; ++it)
+                design.primaryOutputNets.insert((*it)[1]);
         }
 
         // CHECK 2: Is this a Gate? "NAND2 u1 (...)"
@@ -52,8 +59,13 @@ bool VerilogParser::read(std::string filename, Design& design, Library& lib) {
             std::string name = match[2]; 
             std::string args = match[3]; 
 
-            // Filter out keywords like "wire", "input", "output", "assign"
-            if (type == "wire" || type == "input" || type == "output" || type == "assign") continue;
+            // Filter out keywords like "wire", "input", "assign"
+            // For "output", track the net name as a primary output.
+            if (type == "output") {
+                design.primaryOutputNets.insert(name);
+                continue;
+            }
+            if (type == "wire" || type == "input" || type == "assign") continue;
 
             // Does this gate exist in our Library?
             CellDef* cellDef = lib.getCell(type);
