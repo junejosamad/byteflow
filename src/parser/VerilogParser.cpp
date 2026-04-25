@@ -3,12 +3,62 @@
 #include <iostream>
 #include <regex>
 #include <sstream>
+#include <cctype>
 
 std::string VerilogParser::clean(std::string s) {
-    // Remove spaces and commas (e.g., ".A( n1 )," -> ".A(n1)")
     s.erase(remove(s.begin(), s.end(), ' '), s.end());
     s.erase(remove(s.begin(), s.end(), ','), s.end());
     return s;
+}
+
+// Manual gate-instantiation parser — avoids std::regex (.*)  which triggers
+// catastrophic backtracking on GCC's libstdc++ for certain inputs.
+// Returns true and fills type/name/args if the segment is a gate instantiation.
+static bool parseGate(const std::string& seg,
+                      std::string& type, std::string& name, std::string& args)
+{
+    // Find the first '(' — start of port list
+    size_t open = seg.find('(');
+    if (open == std::string::npos || open == 0) return false;
+
+    // Find the matching ')' by counting nesting depth
+    int depth = 0;
+    size_t close = std::string::npos;
+    for (size_t i = open; i < seg.size(); ++i) {
+        if      (seg[i] == '(') ++depth;
+        else if (seg[i] == ')') { if (--depth == 0) { close = i; break; } }
+    }
+    if (close == std::string::npos) return false;
+
+    args = seg.substr(open + 1, close - open - 1);
+
+    // Extract the prefix before '(' and trim trailing whitespace
+    size_t prefixEnd = open;
+    while (prefixEnd > 0 && std::isspace((unsigned char)seg[prefixEnd - 1]))
+        --prefixEnd;
+    if (prefixEnd == 0) return false;
+
+    // Extract instance name (rightmost identifier word in prefix)
+    size_t nEnd = prefixEnd;
+    size_t nStart = nEnd;
+    while (nStart > 0 &&
+           (std::isalnum((unsigned char)seg[nStart - 1]) || seg[nStart - 1] == '_'))
+        --nStart;
+    if (nStart == nEnd) return false;
+    name = seg.substr(nStart, nEnd - nStart);
+
+    // Extract cell type (identifier word immediately before instance name)
+    size_t tEnd = nStart;
+    while (tEnd > 0 && std::isspace((unsigned char)seg[tEnd - 1])) --tEnd;
+    if (tEnd == 0) return false;
+    size_t tStart = tEnd;
+    while (tStart > 0 &&
+           (std::isalnum((unsigned char)seg[tStart - 1]) || seg[tStart - 1] == '_'))
+        --tStart;
+    if (tStart == tEnd) return false;
+    type = seg.substr(tStart, tEnd - tStart);
+
+    return true;
 }
 
 bool VerilogParser::read(std::string filename, Design& design, Library& lib) {
@@ -19,75 +69,54 @@ bool VerilogParser::read(std::string filename, Design& design, Library& lib) {
     }
 
     std::cout << "Parsing " << filename << "...\n";
-    
-    // 1. Read entire file into string
-    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    
-    // 2. Remove newlines/carriage returns (Treat as one long line)
-    for (char &c : content) {
-        if (c == '\n' || c == '\r') c = ' ';
-    }
 
-    // 3. Split by Semicolon ';'
+    std::string content((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+
+    for (char& c : content)
+        if (c == '\n' || c == '\r') c = ' ';
+
     std::stringstream ss(content);
     std::string segment;
-    
-    // Updates Regexes (Removed trailing ;)
+
+    // Simple patterns — safe on all std::regex implementations
     std::regex moduleRegex(R"(module\s+(\w+))");
-    std::regex gateRegex(R"((\w+)\s+(\w+)\s*\((.*)\))"); // No semicolon at end
     std::regex pinRegex(R"(\.(\w+)\(([^)]+)\))");
 
     while (std::getline(ss, segment, ';')) {
         std::smatch match;
 
-        // CHECK 1: Is this the Module Name?
+        // CHECK 1: Module declaration
         if (std::regex_search(segment, match, moduleRegex)) {
             design.name = match[1];
             std::cout << "  Found Module: " << design.name << "\n";
-            // Extract output port names from module header / body declarations.
-            // Handles both "output portName" and "output [N:0] portName" forms.
             std::regex outPortRegex(R"(\boutput\b\s+(?:\[[^\]]*\]\s+)?(\w+))");
             auto it  = std::sregex_iterator(segment.begin(), segment.end(), outPortRegex);
             auto end = std::sregex_iterator();
             for (; it != end; ++it)
                 design.primaryOutputNets.insert((*it)[1]);
+            continue;
         }
 
-        // CHECK 2: Is this a Gate? "NAND2 u1 (...)"
-        else if (std::regex_search(segment, match, gateRegex)) {
-            std::string type = match[1]; 
-            std::string name = match[2]; 
-            std::string args = match[3]; 
+        // CHECK 2: Gate instantiation — manual parse avoids regex backtracking
+        std::string type, name, args;
+        if (!parseGate(segment, type, name, args)) continue;
 
-            // Filter out keywords like "wire", "input", "assign"
-            // For "output", track the net name as a primary output.
-            if (type == "output") {
-                design.primaryOutputNets.insert(name);
-                continue;
-            }
-            if (type == "wire" || type == "input" || type == "assign") continue;
+        if (type == "output") { design.primaryOutputNets.insert(name); continue; }
+        if (type == "wire" || type == "input" || type == "assign" ||
+            type == "endmodule" || type == "reg") continue;
 
-            // Does this gate exist in our Library?
-            CellDef* cellDef = lib.getCell(type);
-            if (!cellDef) {
-                // std::cerr << "  Warning: Unknown Cell Type '" << type << "'\n";
-                continue;
-            }
+        CellDef* cellDef = lib.getCell(type);
+        if (!cellDef) continue;
 
-            // Create the GateInstance
-            GateInstance* inst = new GateInstance(name, cellDef);
-            design.addInstance(inst);
+        GateInstance* inst = new GateInstance(name, cellDef);
+        design.addInstance(inst);
 
-            // Parse Pins
-            auto args_begin = std::sregex_iterator(args.begin(), args.end(), pinRegex);
-            auto args_end = std::sregex_iterator();
-
-            for (std::sregex_iterator i = args_begin; i != args_end; ++i) {
-                std::smatch pinMatch = *i;
-                std::string pinName = pinMatch[1];
-                std::string netName = clean(pinMatch[2]);
-                design.connect(inst, pinName, netName);
-            }
+        auto args_begin = std::sregex_iterator(args.begin(), args.end(), pinRegex);
+        auto args_end   = std::sregex_iterator();
+        for (std::sregex_iterator i = args_begin; i != args_end; ++i) {
+            std::smatch pinMatch = *i;
+            design.connect(inst, pinMatch[1], clean(pinMatch[2]));
         }
     }
 

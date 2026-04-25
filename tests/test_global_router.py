@@ -83,11 +83,18 @@ def run_suite():
     check("GRouteResult class exists",  hasattr(open_eda, "GRouteResult"))
     check("RouteGuide class exists",    hasattr(open_eda, "RouteGuide"))
     check("GCell class exists",         hasattr(open_eda, "GCell"))
-    gr = open_eda.GlobalRouter()
-    check("GlobalRouter instantiates",  gr is not None)
-    check("route method exists",        hasattr(gr, "route"))
-    check("gcells_x method exists",     hasattr(gr, "gcells_x"))
-    check("gcells_y method exists",     hasattr(gr, "gcells_y"))
+    try:
+        gr = open_eda.GlobalRouter()
+        check("GlobalRouter instantiates",  gr is not None)
+        check("route method exists",        hasattr(gr, "route"))
+        check("gcells_x method exists",     hasattr(gr, "gcells_x"))
+        check("gcells_y method exists",     hasattr(gr, "gcells_y"))
+    except Exception as e:
+        check("GlobalRouter instantiates",  False, str(e))
+        check("route method exists",        False, "stage failed")
+        check("gcells_x method exists",     False, "stage failed")
+        check("gcells_y method exists",     False, "stage failed")
+        return summarize()
 
     # ── Stage 2: GRouteResult fields ─────────────────────────────
     print("\n[Stage 2] GRouteResult field types")
