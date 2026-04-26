@@ -40,6 +40,23 @@ struct TimingNode {
 // ============================================================
 // Summary returned after updateTiming()
 // ============================================================
+
+// Operating mode for MCMM analysis
+enum class TimingMode { FUNCTIONAL, SCAN, TEST };
+
+// Result for one corner + mode combination (populated by runAllCorners)
+struct CornerResult {
+    std::string cornerName;
+    std::string modeName     = "functional";
+    double wns               = 0.0;
+    double tns               = 0.0;
+    int    violations        = 0;
+    int    endpoints         = 0;
+    double holdWns           = 0.0;
+    double holdTns           = 0.0;
+    int    holdViolations    = 0;
+};
+
 struct TimingSummary {
     double wns            = 0.0;  // Setup WNS (ps)
     double tns            = 0.0;  // Setup TNS (ps)
@@ -73,6 +90,17 @@ public:
     // --- Core flow ---
     void buildGraph();
     void updateTiming();
+
+    // --- MCMM (Phase 3.1) ---
+    // Register a timing corner from a Liberty file.
+    // period_ps=0 → inherit design SDC / Timer scalar. uncertainty_ps/latency_ps <0 → inherit.
+    bool addCorner(const std::string& name, const std::string& libFile,
+                   double periodPs = 0.0, double uncertaintyPs = -1.0, double latencyPs = -1.0);
+    void runAllCorners();
+    CornerResult              getCornerResult(const std::string& name) const;
+    std::vector<CornerResult> getAllCornerResults() const;
+    CornerResult              getWorstCorner()      const;
+    std::string               formatMcmmReport()    const;
 
     // --- Incremental STA (Phase 3.4) ---
     // Re-run propagation passes only — skip the O(N) graph teardown/rebuild.
@@ -116,6 +144,19 @@ private:
     std::vector<TimingNode*>           nodes;
     std::unordered_map<Pin*, TimingNode*> pinToNode;
     std::vector<TimingNode*>           topoOrder;  // source → sink order
+
+    // --- MCMM internals ---
+    struct TimingCorner {
+        std::string name;
+        Library*    lib           = nullptr;
+        bool        ownLib        = false;   // true → Timer destructor deletes lib
+        double      periodPs      = 0.0;     // 0 = inherit
+        double      uncertaintyPs = -1.0;    // <0 = inherit
+        double      latencyPs     = -1.0;    // <0 = inherit
+    };
+    std::vector<TimingCorner>            corners_;
+    std::map<std::string, CornerResult>  cornerResults_;
+    CornerResult runOneCorner(const TimingCorner& corner);
 
     // --- Internal passes ---
     void computeTopologicalOrder();

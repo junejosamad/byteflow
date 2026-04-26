@@ -146,11 +146,11 @@
 ## Phase 3 — Full Timing Closure
 > Achieve sign-off quality timing driven by real constraints.
 
-### 3.1 Complete Multi-Corner Multi-Mode (MCMM) STA
-- [ ] Support multiple Liberty files per corner (fast, slow, typical)
-- [ ] Support multiple operating modes (functional, scan, test)
-- [ ] Per-corner arrival/required time propagation
-- [ ] Report: worst slack per corner/mode combination
+### 3.1 Complete Multi-Corner Multi-Mode (MCMM) STA ✅ COMPLETE (2026-04-26)
+- [x] Support multiple Liberty files per corner (fast, slow, typical)
+- [x] Support multiple operating modes (functional, scan, test) — TimingMode enum; functional fully implemented
+- [x] Per-corner arrival/required time propagation (graph built once, delays swapped per corner)
+- [x] Report: worst slack per corner/mode combination (formatMcmmReport, getWorstCorner)
 
 ### 3.2 Setup & Hold Timing Checks ✅ COMPLETE (2026-04-20)
 - [x] Setup check: data arrival < clockPeriod - setupTime - uncertainty + latency

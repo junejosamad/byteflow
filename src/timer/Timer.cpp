@@ -1,7 +1,9 @@
 #include "timer/Timer.h"
+#include "db/LibertyParser.h"
 #include "util/Logger.h"
 #include <algorithm>
 #include <iomanip>
+#include <sstream>
 #include <stack>
 #include <unordered_set>
 #include <functional>
@@ -14,6 +16,7 @@ Timer::Timer(Design* d, Library* lib, SpefEngine* spef)
 
 Timer::~Timer() {
     for (auto n : nodes) delete n;
+    for (auto& c : corners_) if (c.ownLib && c.lib) delete c.lib;
 }
 
 // ============================================================
@@ -751,4 +754,200 @@ void Timer::reportAllEndpoints() const {
                   << std::setw(14) << (node->holdSlack == INF ? 0.0 : node->holdSlack)
                   << status << "\n";
     }
+}
+
+// ============================================================
+// 11. MCMM — Multi-Corner Multi-Mode STA  (Phase 3.1)
+// ============================================================
+
+// Register a timing corner from a Liberty file.
+bool Timer::addCorner(const std::string& name, const std::string& libFile,
+                      double periodPs, double uncertaintyPs, double latencyPs) {
+    Library* lib = new Library();
+    LibertyParser parser;
+    parser.parse(libFile, *lib);
+    if (lib->cells.empty()) {
+        Logger::warn(Logger::fmt() << "MCMM: corner '" << name
+                     << "' — no cells parsed from " << libFile);
+        delete lib;
+        return false;
+    }
+    TimingCorner c;
+    c.name          = name;
+    c.lib           = lib;
+    c.ownLib        = true;
+    c.periodPs      = periodPs;
+    c.uncertaintyPs = uncertaintyPs;
+    c.latencyPs     = latencyPs;
+    corners_.push_back(c);
+    Logger::info(Logger::fmt() << "MCMM: registered corner '" << name << "' ("
+                 << lib->cells.size() << " cells"
+                 << (periodPs > 0 ? ", period=" + std::to_string((int)periodPs) + "ps" : "")
+                 << ")");
+    return true;
+}
+
+// Run propagation for one corner, collect metrics, restore library + clock state.
+CornerResult Timer::runOneCorner(const TimingCorner& corner) {
+    // Save current state
+    Library* savedLib         = library;
+    double   savedPeriod      = clockPeriod;
+    double   savedUncertainty = clockUncertainty;
+    double   savedLatency     = clockLatency;
+
+    // Apply corner library
+    if (corner.lib) library = corner.lib;
+
+    // Apply corner clock overrides; fall back to design SDC then Timer scalars
+    if (corner.periodPs > 0.0) {
+        clockPeriod = corner.periodPs;
+        if (corner.uncertaintyPs >= 0.0) clockUncertainty = corner.uncertaintyPs;
+        if (corner.latencyPs     >= 0.0) clockLatency     = corner.latencyPs;
+    } else if (design && !design->sdc.empty()) {
+        const ClockDef* clk = design->sdc.primaryClock();
+        if (clk) {
+            clockPeriod = clk->period_ps;
+            if (corner.uncertaintyPs >= 0.0)
+                clockUncertainty = corner.uncertaintyPs;
+            else
+                clockUncertainty = clk->uncertainty_ps > 0
+                                   ? clk->uncertainty_ps
+                                   : design->sdc.globalClockUncertainty_ps;
+            if (corner.latencyPs >= 0.0)
+                clockLatency = corner.latencyPs;
+            else
+                clockLatency = clk->latency_ps > 0
+                               ? clk->latency_ps
+                               : design->sdc.globalClockLatency_ps;
+        }
+    }
+
+    propagateArrivalTimes();
+    propagateRequiredTimes();
+    computeHoldChecks();
+    calculateSlack();
+
+    CornerResult res;
+    res.cornerName     = corner.name;
+    res.modeName       = "functional";
+    res.wns            = getWNS();
+    res.tns            = getTNS();
+    res.violations     = getViolationCount();
+    res.holdWns        = getHoldWNS();
+    res.holdTns        = getHoldTNS();
+    res.holdViolations = getHoldViolationCount();
+    for (auto node : nodes) if (isEndpoint(node)) res.endpoints++;
+
+    // Restore state
+    library          = savedLib;
+    clockPeriod      = savedPeriod;
+    clockUncertainty = savedUncertainty;
+    clockLatency     = savedLatency;
+
+    return res;
+}
+
+// Iterate all corners, run each, store results; leave graph in worst-WNS-corner state.
+void Timer::runAllCorners() {
+    if (corners_.empty()) {
+        Logger::warn("MCMM: no corners registered — call add_corner() first");
+        return;
+    }
+    if (nodes.empty()) buildGraph();
+
+    cornerResults_.clear();
+    Logger::info(Logger::fmt() << "MCMM: running " << corners_.size() << " corners...");
+
+    for (const auto& corner : corners_) {
+        CornerResult res = runOneCorner(corner);
+        cornerResults_[corner.name] = res;
+        Logger::info(Logger::fmt() << "MCMM:  corner '" << corner.name
+                     << "'  WNS=" << std::fixed << std::setprecision(1) << res.wns
+                     << "ps  TNS=" << res.tns << "ps  viols=" << res.violations);
+    }
+
+    // Re-run worst corner to leave pin slack values in worst-corner state for ECO
+    CornerResult worst = getWorstCorner();
+    for (const auto& corner : corners_) {
+        if (corner.name == worst.cornerName) {
+            runOneCorner(corner);
+            break;
+        }
+    }
+    Logger::info(Logger::fmt() << "MCMM: worst corner = '" << worst.cornerName
+                 << "'  WNS=" << worst.wns << "ps");
+}
+
+CornerResult Timer::getCornerResult(const std::string& name) const {
+    auto it = cornerResults_.find(name);
+    return (it != cornerResults_.end()) ? it->second : CornerResult{};
+}
+
+std::vector<CornerResult> Timer::getAllCornerResults() const {
+    std::vector<CornerResult> out;
+    for (const auto& corner : corners_) {
+        auto it = cornerResults_.find(corner.name);
+        if (it != cornerResults_.end()) out.push_back(it->second);
+    }
+    return out;
+}
+
+CornerResult Timer::getWorstCorner() const {
+    if (cornerResults_.empty()) return CornerResult{};
+    CornerResult worst;
+    worst.wns = std::numeric_limits<double>::infinity();
+    for (const auto& kv : cornerResults_) {
+        if (kv.second.wns < worst.wns) worst = kv.second;
+    }
+    return worst;
+}
+
+std::string Timer::formatMcmmReport() const {
+    std::ostringstream os;
+    os << "\n" << std::string(78, '=') << "\n";
+    os << "  MCMM STATIC TIMING REPORT\n";
+    os << std::string(78, '=') << "\n";
+    os << "  " << std::left
+       << std::setw(14) << "Corner"
+       << std::setw(12) << "Mode"
+       << std::setw(11) << "SetupWNS"
+       << std::setw(11) << "SetupTNS"
+       << std::setw(7)  << "Viols"
+       << std::setw(11) << "HoldWNS"
+       << "HoldViols\n";
+    os << "  " << std::string(76, '-') << "\n";
+
+    for (const auto& corner : corners_) {
+        auto it = cornerResults_.find(corner.name);
+        if (it == cornerResults_.end()) continue;
+        const CornerResult& r = it->second;
+        std::string status = (r.violations == 0 && r.holdViolations == 0) ? "MET"
+                           : (r.violations > 0 && r.holdViolations > 0)   ? "SETUP+HOLD"
+                           : (r.violations > 0)                            ? "SETUP_VIOL"
+                                                                           : "HOLD_VIOL";
+        os << "  " << std::left
+           << std::setw(14) << r.cornerName
+           << std::setw(12) << r.modeName
+           << std::fixed << std::setprecision(1)
+           << std::setw(11) << r.wns
+           << std::setw(11) << r.tns
+           << std::setw(7)  << r.violations
+           << std::setw(11) << r.holdWns
+           << std::setw(10) << r.holdViolations
+           << status << "\n";
+    }
+
+    if (!cornerResults_.empty()) {
+        CornerResult w = getWorstCorner();
+        os << "  " << std::string(76, '-') << "\n";
+        os << "  WORST (" << w.cornerName << ")\n";
+        os << std::fixed << std::setprecision(1);
+        os << "    Setup  WNS=" << w.wns << "ps"
+           << "  TNS=" << w.tns << "ps"
+           << "  Violations=" << w.violations << "\n";
+        os << "    Hold   WNS=" << w.holdWns << "ps"
+           << "  Violations=" << w.holdViolations << "\n";
+    }
+    os << std::string(78, '=') << "\n";
+    return os.str();
 }

@@ -222,6 +222,18 @@ PYBIND11_MODULE(open_eda, m) {
         .def("fix_hold_violations", &EcoEngine::fixHoldViolations,
              "Single-pass buffer insertion for hold", py::arg("design"), py::arg("timer"));
 
+    // 11a. Expose CornerResult struct (MCMM Phase 3.1)
+    py::class_<CornerResult>(m, "CornerResult")
+        .def_readonly("corner_name",     &CornerResult::cornerName)
+        .def_readonly("mode_name",       &CornerResult::modeName)
+        .def_readonly("wns",             &CornerResult::wns)
+        .def_readonly("tns",             &CornerResult::tns)
+        .def_readonly("violations",      &CornerResult::violations)
+        .def_readonly("endpoints",       &CornerResult::endpoints)
+        .def_readonly("hold_wns",        &CornerResult::holdWns)
+        .def_readonly("hold_tns",        &CornerResult::holdTns)
+        .def_readonly("hold_violations", &CornerResult::holdViolations);
+
     // 11. Expose TimingSummary struct
     py::class_<TimingSummary>(m, "TimingSummary")
         .def_readonly("wns",             &TimingSummary::wns)
@@ -289,7 +301,35 @@ PYBIND11_MODULE(open_eda, m) {
              },
              "Rebuild the timing graph (fallback from Python; prefer update_timing_skip_build "
              "when only gate types changed)",
-             py::arg("design"));
+             py::arg("design"))
+        // MCMM (Phase 3.1)
+        .def("add_corner",
+             [](Timer& t, const std::string& name, const std::string& libFile,
+                double periodPs, double uncertaintyPs, double latencyPs) {
+                 return t.addCorner(name, libFile, periodPs, uncertaintyPs, latencyPs);
+             },
+             "Register a timing corner. period_ps=0 inherits design SDC period. "
+             "uncertainty_ps/latency_ps<0 inherit from SDC.",
+             py::arg("name"), py::arg("lib_file"),
+             py::arg("period_ps")      = 0.0,
+             py::arg("uncertainty_ps") = -1.0,
+             py::arg("latency_ps")     = -1.0)
+        .def("run_all_corners",
+             &Timer::runAllCorners,
+             "Run STA across every registered corner; leaves graph in worst-WNS-corner state")
+        .def("get_corner_result",
+             &Timer::getCornerResult,
+             "Return CornerResult for a named corner (empty result if not yet run)",
+             py::arg("name"))
+        .def("get_all_corner_results",
+             &Timer::getAllCornerResults,
+             "Return list of CornerResult for all corners in registration order")
+        .def("get_worst_corner",
+             &Timer::getWorstCorner,
+             "Return the CornerResult with the lowest (most negative) setup WNS")
+        .def("format_mcmm_report",
+             &Timer::formatMcmmReport,
+             "Return ASCII MCMM summary table as a string");
 
     // 12. TimingReporter — structured sign-off reports
     py::class_<PathStep>(m, "PathStep")
