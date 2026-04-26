@@ -26,6 +26,7 @@
 #include "analysis/LogicOptimizer.h"
 #include "synthesis/SynthEngine.h"
 #include "synthesis/GateSizer.h"
+#include "scripting/TclEngine.h"
 #include "parser/SdcParser.h"
 #include "route/GlobalRouter.h"
 
@@ -196,7 +197,18 @@ PYBIND11_MODULE(open_eda, m) {
         .def("extract", &SpefEngine::extract, "Extract RC parasitics")
         .def("write_spef", [](SpefEngine& spef, const std::string& filename, Design* chip) {
             spef.writeSpef(filename, *chip);
-        }, "Write SPEF file");
+        }, "Write SPEF file", py::arg("filename"), py::arg("design"))
+        .def("read_spef",
+             &SpefEngine::readSpef,
+             "Back-annotate parasitics from an existing SPEF file. "
+             "Returns True if at least one net was loaded.",
+             py::arg("filename"))
+        .def("get_wire_delay", &SpefEngine::getWireDelay,
+             "Return Elmore delay (ps) for a named net", py::arg("net_name"))
+        .def("get_net_cap",    &SpefEngine::getNetCap,
+             "Return total capacitance (fF) for a named net", py::arg("net_name"))
+        .def("get_extracted_net_count", &SpefEngine::getExtractedNetCount,
+             "Return number of nets with back-annotated parasitics");
 
     // 10. Expose EcoResult struct + EcoEngine
     py::class_<EcoResult>(m, "EcoResult")
@@ -642,4 +654,24 @@ PYBIND11_MODULE(open_eda, m) {
         .def("gcell",    &GlobalRouter::gcell,
              "Return GCell at (row, col)",
              py::arg("row"), py::arg("col"));
+
+    // ── TCL Engine (Phase 2.7) ────────────────────────────────────────────
+    py::class_<TclEngine>(m, "TclEngine")
+        .def(py::init([](Design* d) { return new TclEngine(d); }),
+             "Construct a TclEngine bound to the given Design",
+             py::arg("design"))
+        .def("run_script",
+             &TclEngine::runScript,
+             "Execute a .tcl batch script file. Returns True if all commands succeeded.",
+             py::arg("filename"))
+        .def("run_command",
+             &TclEngine::runCommand,
+             "Execute a single TCL command string. Returns True on success.",
+             py::arg("cmd"))
+        .def("get_output",   &TclEngine::getOutput,
+             "Accumulated puts/report output since last clear_output()")
+        .def("get_error",    &TclEngine::getError,
+             "Last error message (empty if no error)")
+        .def("clear_output", &TclEngine::clearOutput,
+             "Reset accumulated output and error buffers");
 }

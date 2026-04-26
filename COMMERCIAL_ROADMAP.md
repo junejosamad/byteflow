@@ -2,7 +2,7 @@
 
 **Goal:** Evolve OpenEDA from a research prototype into a commercial-grade RTL-to-GDSII physical design platform.  
 **Target Market:** Cloud-native EDA, open-PDK flows (SkyWater 130nm / GF180), academic → production pipeline.  
-**Last Updated:** 2026-04-24 (Phase 0.4 error handling, Phase 0.5 CI, Phase 1.2 Global Routing)
+**Last Updated:** 2026-04-26 (Phase 0.1 buffer fix, Phase 2.5 SPEF input, Phase 2.7 TCL scripting, Phase 3.1 MCMM STA)
 
 ---
 
@@ -20,10 +20,10 @@
 ## Phase 0 — Foundation Hardening (Current State Cleanup)
 > Fix known issues in the existing prototype before building on top.
 
-### 0.1 Post-Route Buffer Insertion Fix
-- [ ] Debug overlap caused by buffer insertion after routing
-- [ ] Re-enable `LogicOptimizer` buffer insertion with legalization pass
-- [ ] Validate no DRC violations introduced
+### 0.1 Post-Route Buffer Insertion Fix  ✅ COMPLETE (2026-04-26)
+- [x] Debug overlap caused by buffer insertion after routing
+- [x] Re-enable `LogicOptimizer` buffer insertion with legalization pass (Legalizer::run() after all insertions)
+- [x] Validate no DRC violations introduced — 16/16 tests pass (`tests/test_buffer_insertion.py`)
 
 ### 0.2 STA Backward Propagation (Required Time)
 - [x] Implement required-time (RAT) backward traversal — topological sort, reverse pass
@@ -126,20 +126,24 @@
 - [ ] Parse DEF `ROWS` and `TRACKS`
 - [ ] Enable mixed-flow: place externally, route in OpenEDA
 
-### 2.5 SPEF Input Parser
-- [ ] Parse `*D_NET` sections (distributed RC)
-- [ ] Back-annotate parasitics into STA engine for post-route timing
+### 2.5 SPEF Input Parser  ✅ COMPLETE (2026-04-26)
+- [x] Parse `*NAME_MAP`, `*D_NET`, `*CONN`, `*CAP`, `*RES` sections (IEEE 1481 SPEF)
+- [x] Back-annotate parasitics into STA engine for post-route timing (`SpefEngine::readSpef`)
+- [x] Per-net helpers: `getWireDelay`, `getNetCap`, `getExtractedNetCount`
+- [x] Write+read round-trip verified; STA WNS consistent within 1ps — 19/19 tests pass (`tests/test_spef_input.py`)
 
 ### 2.6 OpenDB-Compatible Internal Database
 - [ ] Refactor `Design` class to use OpenDB-like schema (or native OpenDB)
 - [ ] Enables interoperability with OpenROAD, Yosys ecosystem
 - [ ] Preserve Python bindings through abstraction layer
 
-### 2.7 TCL Scripting Interface
-- [ ] Embed TCL interpreter (libtcl)
-- [ ] Expose all engine commands as TCL procedures: `read_verilog`, `read_lef`, `place_design`, `route_design`, `write_gds`, etc.
-- [ ] Batch script execution: `open_eda -script run.tcl`
-- [ ] Industry expectation: all commercial EDA tools are TCL-driven
+### 2.7 TCL Scripting Interface  ✅ COMPLETE (2026-04-26)
+- [x] Custom lightweight TCL engine (no libtcl dependency) with quoted-string tokenizer and `$var`/`${var}` substitution
+- [x] Commands: `puts`, `set`, `read_verilog`, `read_liberty`, `read_lef`, `read_sdc`, `place_design`, `route_design`, `write_gds`, `write_spef`, `report_timing`, `check_drc`, `check_lvs`, `help`
+- [x] Batch script execution: `open_eda -script run.tcl` (main.cpp `-script` mode)
+- [x] Python API: `TclEngine(design)` with `run_script`, `run_command`, `get_output`, `get_error`, `clear_output`
+- [x] `benchmarks/test_flow.tcl` example script (full RTL-to-GDSII flow)
+- [x] 40/40 tests pass (`tests/test_tcl_engine.py`)
 
 ---
 

@@ -1,10 +1,12 @@
 #include "analysis/SpefEngine.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
 #include <ctime>
+#include <cctype>
 
 // Initialize static constexpr members
 constexpr double SpefEngine::layerSheetR[4];
@@ -265,4 +267,125 @@ double SpefEngine::getWireDelay(const std::string& netName) const {
 double SpefEngine::getNetCap(const std::string& netName) const {
     auto it = parasiticsMap.find(netName);
     return (it != parasiticsMap.end()) ? it->second.totalC : 0.0;
+}
+
+// ============================================================
+// SPEF READER — back-annotate parasitics from an existing file
+// ============================================================
+bool SpefEngine::readSpef(const std::string& filename) {
+    std::ifstream f(filename);
+    if (!f.is_open()) {
+        std::cout << "  [SpefEngine] readSpef: cannot open " << filename << "\n";
+        return false;
+    }
+
+    // name map: "*1" -> "actual_net_name"
+    std::unordered_map<std::string, std::string> nameMap;
+
+    // in-progress net state
+    std::string curNet;
+    double curTotalC = 0.0;
+    double curTotalR = 0.0;
+    std::vector<WireSegment> curSegs;
+
+    enum class Sec { NONE, NAME_MAP, CONN, CAP, RES } sec = Sec::NONE;
+
+    // Resolve a SPEF ID (*1) to actual net name, or return token as-is
+    auto resolve = [&](const std::string& tok) -> std::string {
+        if (tok.size() > 1 && tok[0] == '*' &&
+            std::isdigit((unsigned char)tok[1])) {
+            auto it = nameMap.find(tok);
+            return it != nameMap.end() ? it->second : tok;
+        }
+        return tok;
+    };
+
+    // Flush current net into parasiticsMap
+    auto flush = [&]() {
+        if (curNet.empty()) return;
+        NetParasitics np;
+        np.netName     = curNet;
+        np.totalC      = curTotalC;
+        np.totalR      = curTotalR;
+        np.elmoreDelay = curTotalR * curTotalC * 0.001; // ohm * fF -> ps
+        np.segments    = curSegs;
+        parasiticsMap[curNet] = np;
+        curNet.clear(); curTotalC = 0; curTotalR = 0; curSegs.clear();
+    };
+
+    std::string line;
+    while (std::getline(f, line)) {
+        // trim leading whitespace
+        size_t s = line.find_first_not_of(" \t\r\n");
+        if (s == std::string::npos) continue;
+        line = line.substr(s);
+        // skip comments
+        if (line.size() >= 2 && line[0] == '/' && line[1] == '/') continue;
+        if (line.empty()) continue;
+
+        // ── section keywords ─────────────────────────────────
+        if (line.rfind("*NAME_MAP", 0) == 0) { sec = Sec::NAME_MAP; continue; }
+
+        if (line.rfind("*D_NET", 0) == 0 && line.size() > 6) {
+            flush();
+            std::istringstream ss(line.substr(6));
+            std::string id; double cap = 0.0;
+            ss >> id >> cap;
+            curNet    = resolve(id);
+            curTotalC = cap;
+            sec = Sec::CONN;
+            continue;
+        }
+        if (line == "*CONN") { sec = Sec::CONN; continue; }
+        if (line == "*CAP")  { sec = Sec::CAP;  continue; }
+        if (line == "*RES")  { sec = Sec::RES;  continue; }
+        if (line == "*END")  { flush(); sec = Sec::NONE; continue; }
+
+        // skip non-numeric *KEYWORD header lines when not in NAME_MAP
+        if (line[0] == '*' && (line.size() < 2 || !std::isdigit((unsigned char)line[1]))) {
+            if (sec != Sec::NAME_MAP) continue;
+        }
+
+        // ── section content ───────────────────────────────────
+        switch (sec) {
+        case Sec::NAME_MAP: {
+            // *1 net_name  or  *1 "net name"
+            if (line[0] == '*' && line.size() > 1 &&
+                std::isdigit((unsigned char)line[1])) {
+                std::istringstream ss(line);
+                std::string id, name;
+                ss >> id >> name;
+                if (!name.empty() && name.front() == '"') name = name.substr(1);
+                if (!name.empty() && name.back()  == '"') name.pop_back();
+                nameMap[id] = name;
+            }
+            break;
+        }
+        case Sec::RES: {
+            // index node1 node2 resistance_ohm
+            std::istringstream ss(line);
+            int idx; std::string n1, n2; double r = 0.0;
+            if (ss >> idx >> n1 >> n2 >> r) {
+                curTotalR += r;
+                WireSegment seg{};
+                seg.resistance  = r;
+                seg.capacitance = 0.0;
+                seg.layer       = 1;
+                seg.length      = 0.0;
+                curSegs.push_back(seg);
+            }
+            break;
+        }
+        case Sec::CAP:
+            // total cap already captured from *D_NET header; skip per-node entries
+            break;
+        default:
+            break;
+        }
+    }
+    flush(); // handle file ending without *END
+
+    std::cout << "  [SpefEngine] readSpef: loaded " << parasiticsMap.size()
+              << " nets from " << filename << "\n";
+    return !parasiticsMap.empty();
 }

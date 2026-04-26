@@ -25,8 +25,10 @@
 #include "gui/GuiEngine.h"
 #include "export/GdsExporter.h"
 #include "timer/Timer.h"
-#include "analysis/SpefEngine.h"  // PHASE 5: RC Parasitic Extraction
+#include "analysis/SpefEngine.h"   // PHASE 5: RC Parasitic Extraction
+#include "analysis/EcoEngine.h"   // PHASE 3.4: ECO / buffer insertion
 #include "floorplan/Floorplanner.h" // PHASE 6: Macro Floorplanning
+#include "scripting/TclEngine.h"   // PHASE 2.7: TCL scripting
 
 
 int main(int argc, char* argv[]) {
@@ -34,7 +36,16 @@ int main(int argc, char* argv[]) {
 
     if (argc < 2) {
         std::cout << "Usage: open_eda.exe <verilog_file>\n";
+        std::cout << "       open_eda.exe -script <flow.tcl>\n";
         return 1;
+    }
+
+    // TCL script mode: open_eda -script flow.tcl
+    if (argc >= 3 && std::string(argv[1]) == "-script") {
+        Design chip;
+        TclEngine tcl(&chip);
+        bool ok = tcl.runScript(argv[2]);
+        return ok ? 0 : 1;
     }
 
     // CRITICAL: Initialize Random Seed for Placement
@@ -195,14 +206,21 @@ int main(int argc, char* argv[]) {
         router.runRouting(chip, (int)coreSize, (int)coreSize);
 
         // 8. LOGIC OPTIMIZATION (Buffer Insertion)
-        // TEMPORARILY DISABLED: Causes post-route overlap shorts
-        /*
-        opt.fixTiming(chip, lib);
-
-        // 9. INCREMENTAL ROUTING (Route the new buffers)
-        std::cout << "\n[Router] Re-routing modified nets...\n";
-        router.runRouting(chip, 400, 400);
-        */
+        // Re-enabled: EcoEngine::fixHoldViolations now calls Legalizer after
+        // buffer insertion, eliminating cell-cell overlaps (Phase 0.1 fix).
+        {
+            Timer ecoTimer(&chip, &lib, nullptr);
+            ecoTimer.buildGraph();
+            ecoTimer.setClockPeriod(1000.0);
+            ecoTimer.updateTiming();
+            EcoEngine eco;
+            int bufsInserted = eco.fixHoldViolations(&chip, ecoTimer);
+            if (bufsInserted > 0) {
+                // 9. Re-route nets connected to inserted buffers
+                std::cout << "\n[Router] Re-routing modified nets (" << bufsInserted << " buffers)...\n";
+                router.runRouting(chip, (int)coreSize, (int)coreSize);
+            }
+        }
 
         // 10. PHASE 5: RC PARASITIC EXTRACTION
         SpefEngine spef;

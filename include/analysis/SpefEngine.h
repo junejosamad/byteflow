@@ -37,6 +37,11 @@ public:
     // Export IEEE-standard SPEF file
     void writeSpef(const std::string& filename, Design& design);
 
+    // Back-annotate parasitics from an existing SPEF file.
+    // Populates parasiticsMap so getWireDelay / getNetCap work without extract().
+    // Returns true if at least one net was parsed.
+    bool readSpef(const std::string& filename);
+
     // Look up extracted parasitics for a specific net
     const NetParasitics* getParasitics(const std::string& netName) const;
 

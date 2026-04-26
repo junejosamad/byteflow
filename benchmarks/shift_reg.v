@@ -4,7 +4,7 @@ module shift_reg (
     output out
 );
     wire n1, n2, n3;
-    
+
     // A chain of 4 Registers
     DFF f1 (.C(clk), .D(in), .Q(n1));
     DFF f2 (.C(clk), .D(n1), .Q(n2));

@@ -1,4 +1,5 @@
 #include "analysis/EcoEngine.h"
+#include "place/Legalizer.h"
 #include <iostream>
 #include <algorithm>
 #include <iomanip>
@@ -204,6 +205,17 @@ int EcoEngine::fixHoldViolations(Design* chip, Timer& timer) {
             lastInserted_.push_back(buf);  // tracked for patchGraph
         }
     }
+
+    // Legalize after all insertions to eliminate cell-cell overlaps.
+    // Buffers are placed initially at (FF.x + offset, FF.y) which can
+    // collide with adjacent cells; Legalizer snaps them to legal row slots.
+    if (inserted > 0 && chip->coreWidth > 0 && chip->coreHeight > 0) {
+        Legalizer leg(chip, chip->coreWidth, chip->coreHeight);
+        leg.run();
+        std::cout << "  [ECO] Legalized " << inserted
+                  << " inserted buffer(s) — cell overlaps resolved\n";
+    }
+
     return inserted;
 }
 
