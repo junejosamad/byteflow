@@ -22,35 +22,50 @@ uint32_t GdsExporter::swap32(uint32_t val) {
            ((val >> 24) & 0x000000FF);
 }
 
-// GDSII requires 8-byte IBM System/360 Hexadecimal floating-point format
+// GDSII requires 8-byte IBM System/360 Hexadecimal floating-point format.
+//
+// IBM Real8: S(1) | E(7, bias=64, base-16) | M(56-bit hex fraction)
+// value = (-1)^S × (M × 2^-56) × 16^(E-64)
+//       = (-1)^S × M × 2^(4E - 312)
+//
+// IEEE double: value = M_ieee × 2^(ieee_exp - 52)
+//
+// Solving: M_ibm = M_ieee × 2^(ieee_exp + 260 - 4×E)
+// where E = floor((ieee_exp + 260) / 4) keeps the shift in [0,3].
 uint64_t GdsExporter::real8ToGDS(double value) {
     if (value == 0.0) return 0;
-    
+
     uint64_t bits;
     std::memcpy(&bits, &value, sizeof(bits));
-    
-    int sign = (bits >> 63) & 1;
-    int exp = ((bits >> 52) & 0x7FF) - 1023; // Unbias IEEE exponent
-    uint64_t mantissa = (bits & 0xFFFFFFFFFFFFF) | 0x10000000000000; // Add hidden 1
-    
-    // Convert base-2 exponent to base-16
-    exp += 4;
-    int exp16 = (exp + 256) / 4; // Bias IBM Exponent by 64 (x4 = 256)
-    int shift = (exp16 * 4) - exp - 4;
-    
-    mantissa >>= shift;
-    
-    uint64_t result = ((uint64_t)sign << 63) | ((uint64_t)(exp16 & 0x7F) << 56) | (mantissa >> 4);
-    
-    // Swap 64-bit endianness
-    return ((result & 0xFF00000000000000ULL) >> 56) | 
-           ((result & 0x00FF000000000000ULL) >> 40) | 
-           ((result & 0x0000FF0000000000ULL) >> 24) | 
-           ((result & 0x000000FF00000000ULL) >>  8) | 
-           ((result & 0x00000000FF000000ULL) <<  8) | 
-           ((result & 0x0000000000FF0000ULL) << 24) | 
-           ((result & 0x000000000000FF00ULL) << 40) | 
-           ((result & 0x00000000000000FFULL) << 56);
+
+    int sign     = (int)(bits >> 63) & 1;
+    int ieee_exp = (int)((bits >> 52) & 0x7FF) - 1023;
+    uint64_t mantissa = (bits & 0x000FFFFFFFFFFFFFULL) | 0x0010000000000000ULL; // 53-bit
+
+    // IBM base-16 biased exponent
+    int exp16 = (ieee_exp + 260) / 4;
+
+    // Left-shift the 53-bit IEEE mantissa to fill the 56-bit IBM mantissa field.
+    // left_shift = ieee_exp + 260 - 4*exp16, always in [0, 3].
+    int left_shift = ieee_exp + 260 - 4 * exp16;
+    uint64_t ibm_mantissa = mantissa << left_shift;
+
+    if (exp16 < 0)   { exp16 = 0;   ibm_mantissa = 0; }
+    if (exp16 > 127) { exp16 = 127; }
+
+    uint64_t result = ((uint64_t)sign           << 63)
+                    | ((uint64_t)(exp16 & 0x7F) << 56)
+                    | (ibm_mantissa & 0x00FFFFFFFFFFFFFFULL);
+
+    // Swap to big-endian
+    return ((result & 0xFF00000000000000ULL) >> 56)
+         | ((result & 0x00FF000000000000ULL) >> 40)
+         | ((result & 0x0000FF0000000000ULL) >> 24)
+         | ((result & 0x000000FF00000000ULL) >>  8)
+         | ((result & 0x00000000FF000000ULL) <<  8)
+         | ((result & 0x0000000000FF0000ULL) << 24)
+         | ((result & 0x000000000000FF00ULL) << 40)
+         | ((result & 0x00000000000000FFULL) << 56);
 }
 
 // ========================================================================
