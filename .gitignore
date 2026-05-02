@@ -1,22 +1,48 @@
 ﻿build/
 .vscode/
 *.exe
+
+# Log files
 *.log
 
-# Build/test output logs
-*.log
-*.txt
-!CMakeLists.txt
-!requirements.txt
-
-# Generated binaries
-output.gds
+# Build artifacts
 *.pyd
-route_debug.log
+*.so
 
 # IDE / GUI state
 imgui.ini
 
-# Loose SVGs and test files
+# SVGs
 *.svg
+
+# Claude Code settings
+.claude/
+
+# Cloud workspace — temporary per-job I/O
+cloud_workspace/
+
+# Flow-generated outputs (root level)
+output.gds
+output.spef
+output_timing.rpt
+output_timing.html
+layout_view.png
+layout_initial.svg
+layout_placed.svg
+
+# Flow-generated benchmark artifacts
+benchmarks/*.spef
+benchmarks/*.gds
+benchmarks/*.def
+benchmarks/*_routed.v
+
+# Scratch / one-off test scripts
+direct_test.py
+export.py
+gds-test.py
 test_minimal.v
+
+# Loose capture/debug text files at root
+*.txt
+!CMakeLists.txt
+!requirements.txt
