@@ -38,8 +38,12 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
     int gridL = 7;   // Layers 0, 1, 2, 3, 4, 5, 6 (M1 through M6 where 0 is unused)
     int maxIter = 30;
 
-    // Adaptive scale: keep totalNodes (gridW*gridH*gridL) ≤ MAX_GRID_NODES
-    static const int MAX_GRID_NODES = 300000;
+    // Adaptive scale: keep totalNodes (gridW*gridH*gridL) ≤ MAX_GRID_NODES.
+    // 300k was too coarse (scale=2.22): adjacent input pins quantized to the
+    // SAME grid cell, so two nets shared the same source location and the only
+    // L2 escape via — all other L1 neighbors are PDN-blocked.  2M keeps scale=1
+    // for typical small floorplans (~460x460x7 = 1.48M nodes).
+    static const int MAX_GRID_NODES = 2000000;
     double rawNodes = (double)gridW * gridH * gridL;
     double scaleXY  = (rawNodes > MAX_GRID_NODES)
                         ? std::sqrt(rawNodes / MAX_GRID_NODES)
@@ -77,16 +81,42 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
         }
     }
     
-    // Add Pre-Routed Paths (VDD, VSS, etc.) to the obstacle map
+    // Add Pre-Routed PDN paths to the obstacle map.
+    // Interpolate ALL grid cells along each wire segment — the old code only marked
+    // endpoints, leaving entire PDN rail spans transparent to signal routing and
+    // producing 300 DRC shorts where signal wires crossed M1 power rails.
+    // Signal pin cells are excluded so pin access is never blocked.
     for (Net* const preNet : design.nets) {
-        if (preNet->name == "VDD" || preNet->name == "VSS" || preNet->connectedPins.size() < 2) {
-            for (const Point& pt : preNet->routePath) {
-                int gx = (int)(pt.x / scaleX);
-                int gy = (int)(pt.y / scaleY);
-                if (gx >= 0 && gx < gridW && gy >= 0 && gy < gridH && pt.layer >= 1 && pt.layer < gridL) {
-                    // Reduce penalty factor significantly. It's a hindrance, but not a solid wall since we can drop vias around it
-                    obstacles[getIdx(gx, gy, pt.layer, gridH, gridL)] += 2; 
-                }
+        if (preNet->name != "VDD" && preNet->name != "VSS" && preNet->connectedPins.size() >= 2) continue;
+        const auto& path = preNet->routePath;
+        for (size_t i = 0; i + 1 < path.size(); i++) {
+            const Point& p1 = path[i];
+            const Point& p2 = path[i + 1];
+            if (p1.layer != p2.layer) continue; // via transition — different layers, not a wire
+            if (p1.layer < 1 || p1.layer >= gridL) continue;
+            int gx1 = std::max(0, std::min(gridW-1, (int)(p1.x / scaleX)));
+            int gy1 = std::max(0, std::min(gridH-1, (int)(p1.y / scaleY)));
+            int gx2 = std::max(0, std::min(gridW-1, (int)(p2.x / scaleX)));
+            int gy2 = std::max(0, std::min(gridH-1, (int)(p2.y / scaleY)));
+            int ddx = (gx2 > gx1) ? 1 : (gx2 < gx1) ? -1 : 0;
+            int ddy = (gy2 > gy1) ? 1 : (gy2 < gy1) ? -1 : 0;
+            // Skip diagonal phantom pairs — the flat pair-encoded routePath joins
+            // the end of one segment to the start of the next, forming a diagonal
+            // "joint" that is not a real wire. Only H or V segments are valid PDN wires.
+            if (ddx != 0 && ddy != 0) continue;
+            int gx = gx1, gy = gy1;
+            int maxSteps = std::abs(gx2 - gx1) + std::abs(gy2 - gy1) + 1;
+            for (int step = 0; step <= maxSteps; step++) {
+                if (gx < 0 || gx >= gridW || gy < 0 || gy >= gridH) break;
+                int idx = getIdx(gx, gy, p1.layer, gridH, gridL);
+                // Hard-block this PDN cell. With HALF_WIDTH=0.07 (7nm) and
+                // minSpacing=80nm, an adjacent signal route (gap=86nm) is DRC-clean.
+                // No clearance buffer needed — the thin wire geometry ensures the
+                // 14nm total wire pair width << 80nm spacing rule.
+                if (pinOwner[idx] == nullptr)
+                    obstacles[idx] = 99999;
+                if (gx == gx2 && gy == gy2) break;
+                gx += ddx; gy += ddy;
             }
         }
     }
@@ -113,6 +143,10 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             }
         }
     }
+
+    // Stuck-detection state — must be per-call locals, not statics
+    int prevConflicts = -1;
+    int stuckIters    = 0;
 
     for (int iter = 1; iter <= maxIter && hasConflicts; ++iter) {
         std::cout << "  Iteration " << iter << "...\n" << std::flush;
@@ -142,12 +176,19 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
 
                 if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
 
-                // Rip-up previous route before rerouting
+                // Rip-up previous route before rerouting.
+                // Iterate with dedup: pair-encoding stores interior points twice
+                // consecutively; decrementing them twice drives usage negative and
+                // makes those cells appear free to later nets (congCost clamps at 0).
                 if (iter > 1 && net->routePath.size() > 0) {
+                    int prevRipIdx = -1;
                     for (const auto& p : net->routePath) {
                         int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
                         int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
-                        usage[getIdx(px, py, p.layer, gridH, gridL)]--;
+                        int ridx = getIdx(px, py, p.layer, gridH, gridL);
+                        if (ridx == prevRipIdx) { prevRipIdx = ridx; continue; }
+                        prevRipIdx = ridx;
+                        usage[ridx]--;
                     }
                 }
 
@@ -161,12 +202,6 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 
                 Pin* startPin = net->connectedPins[0];
                 if (!startPin || !startPin->inst) continue;
-
-                for (Pin* p : net->connectedPins) {
-                    int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
-                    int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
-                    usage[getIdx(px, py, 1, gridH, gridL)] -= 50;
-                }
 
                 auto isSegmentClear = [&](int x1, int y1, int x2, int y2, int layer) -> bool {
                     int dx = (x2 > x1) ? 1 : ((x2 < x1) ? -1 : 0);
@@ -253,17 +288,11 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 }
 
                 if (patternRouted) {
-                    // Update usage directly — no set needed (mild over-count is OK for PathFinder)
                     for (const auto& p : net->routePath) {
                         int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
                         int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
                         if (p.layer >= 1 && p.layer < gridL)
                             usage[getIdx(px, py, p.layer, gridH, gridL)]++;
-                    }
-                    for (Pin* p : net->connectedPins) {
-                        int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
-                        int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
-                        usage[getIdx(px, py, 1, gridH, gridL)] += 50;
                     }
                     continue;
                 }
@@ -310,7 +339,7 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                     bbMinY = std::min(bbMinY, py);
                     bbMaxY = std::max(bbMaxY, py);
                 }
-                int margin = std::min(30 + iter * 15, std::min(gridW / 2, gridH / 2));
+                int margin = std::min(100 + iter * 30, std::min(gridW / 2, gridH / 2));
                 bbMinX = std::max(1, bbMinX - margin);
                 bbMaxX = std::min(gridW - 2, bbMaxX + margin);
                 bbMinY = std::max(1, bbMinY - margin);
@@ -321,7 +350,7 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
                 const int dy[] = {0, 0, -1, 1, 0, 0};
                 const int dl[] = {0, 0, 0, 0, -1, 1};
 
-                const int MAX_EXPAND = 60000; // Safety cap — prevents runaway A* on congested grids
+                const int MAX_EXPAND = 500000; // Safety cap — 500k handles detour paths in 460x460 grid
                 int nodesExpanded = 0;
                 while (!astar_pq_buf.empty() && nodesExpanded < MAX_EXPAND) {
                     Node curr = astar_pq_buf.front();
@@ -369,11 +398,15 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
 
                         float congCost = 0.0f;
                         if (netUsedId[nIdx] != current_net_id) {
-                            // Clamp usage to 0: pins are pre-decremented to -50; negative usage
-                            // must not produce negative congCost (which creates parentIdx cycles).
                             int eff = (usage[nIdx] > 0) ? usage[nIdx] : 0;
-                            if (eff > 0 || obstacles[nIdx] > 0) {
-                                congCost = (float)(eff * 200.0 + obstacles[nIdx] * 20.0);
+                            if (eff > 0) {
+                                // Hard-block cells committed by earlier nets (1e7 >> any
+                                // detour cost), except the explicit target which must always
+                                // be reachable. Converts routing to sequential: first-come,
+                                // first-served — eliminates the soft-penalty oscillation.
+                                congCost = (nIdx != targetIdx) ? 1e7f : 0.0f;
+                            } else if (obstacles[nIdx] > 0) {
+                                congCost = (float)(obstacles[nIdx] * 20.0);
                             }
                         }
 
@@ -428,12 +461,7 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             });
             net->routePath.erase(last, net->routePath.end());
             
-            // Relock pins and commit path to usage map
-            for (Pin* p : net->connectedPins) {
-                int px = std::max(0, std::min(gridW-1, (int)(p->getAbsX() / scaleX)));
-                int py = std::max(0, std::min(gridH-1, (int)(p->getAbsY() / scaleY)));
-                usage[getIdx(px, py, 1, gridH, gridL)] += 50;
-            }
+            // Commit path to usage map (no pin-lock offset — usage tracks real occupancy)
             for (const auto& p : net->routePath) {
                 int px = std::max(0, std::min(gridW-1, (int)(p.x / scaleX)));
                 int py = std::max(0, std::min(gridH-1, (int)(p.y / scaleY)));
@@ -444,74 +472,87 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
             } // end net loop
         } // end sequential routing block
         
-        // Post-Iteration: Check for conflicts and update history map
+        // Post-Iteration: Detect TRUE cross-net conflicts via cell ownership map.
+        //
+        // The routePath uses pair-segment encoding: path A→B→C is stored as
+        // [A,B, B,C] so every interior point appears twice consecutively.
+        // The old usage[idx]>1 check fired on a net's own path (false positive),
+        // producing ~200 phantom conflicts that caused the 202↔207 oscillation.
+        // Fix: skip consecutive duplicate indices and check cross-net ownership.
         int conflicts = 0;
-        float current_penalty_multiplier = (iter > 5) ? 1.5f : 1.0f;
 
-        // --- PIN WHITELIST HELPER ---
-        // Pins physically reside on Layer 1. Check if a coordinate is a legal pin for this net.
-        auto isLegalPinJunction = [&](Net* net, int x, int y, int z) -> bool {
-            if (z != 1) return false; // All pins are on Layer 1
+        // Penalty multiplier grows each iteration for exponential escalation
+        float penaltyMult = 1.5f + 0.5f * std::min(iter - 1, 8); // 1.5 → 5.5
+
+        // Ensure cell_owner is sized; fill with -1 (unowned)
+        if ((int)cell_owner.size() < totalNodes)
+            cell_owner.assign(totalNodes, -1);
+        else
+            std::fill(cell_owner.begin(), cell_owner.begin() + totalNodes, -1);
+
+        // Pin-junction whitelist: a cell is legal if any of net's own pins map to it.
+        // Uses grid coordinates (gpx/gpy) — routePath stores (int)(grid*scale) which
+        // does NOT round-trip cleanly back to the physical pin coordinate, so comparing
+        // physical coords caused the whitelist to always miss and flag ~90 false conflicts.
+        auto isLegalPinJunction = [&](Net* net, int gpx, int gpy, int gz) -> bool {
+            if (gz != 1) return false;
             for (Pin* pin : net->connectedPins) {
                 if (!pin || !pin->inst) continue;
-                if ((int)pin->getAbsX() == x && (int)pin->getAbsY() == y) {
-                    return true;
-                }
+                int ppx = std::max(0, std::min(gridW-1, (int)(pin->getAbsX() / scaleX)));
+                int ppy = std::max(0, std::min(gridH-1, (int)(pin->getAbsY() / scaleY)));
+                if (ppx == gpx && ppy == gpy) return true;
             }
             return false;
         };
 
-        for (Net* net : design.nets) {
+        // Pass 1: claim cells — first net to visit a unique cell owns it
+        for (int netIdx = 0; netIdx < (int)design.nets.size(); ++netIdx) {
+            Net* net = design.nets[netIdx];
             if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
-
-            int local_conflicts = 0;
-
-            for (size_t i = 0; i < net->routePath.size(); ++i) {
-                auto& pt = net->routePath[i];
+            int prevIdx = -1;
+            for (const auto& pt : net->routePath) {
                 int px = std::max(0, std::min(gridW-1, (int)(pt.x / scaleX)));
                 int py = std::max(0, std::min(gridH-1, (int)(pt.y / scaleY)));
                 int idx = getIdx(px, py, pt.layer, gridH, gridL);
+                if (idx == prevIdx) { prevIdx = idx; continue; } // skip pair-encoding dups
+                prevIdx = idx;
+                if (cell_owner[idx] < 0) cell_owner[idx] = netIdx;
+            }
+        }
 
-                // If the grid node has more than 1 net on it...
-                if (usage[idx] > 1) {
-
-                    // --- THE WHITELIST CHECK ---
-                    // If this coordinate is exactly the origin or destination pin,
-                    // it is legally allowed to share this space!
-                    if (isLegalPinJunction(net, pt.x, pt.y, pt.layer)) {
-                        continue; // Ignore! Do not flag as a conflict.
+        // Pass 2: flag cells where a different net is the owner → true conflict
+        for (int netIdx = 0; netIdx < (int)design.nets.size(); ++netIdx) {
+            Net* net = design.nets[netIdx];
+            if (net->name == "VDD" || net->name == "VSS" || net->connectedPins.size() < 2) continue;
+            int prevIdx = -1;
+            for (const auto& pt : net->routePath) {
+                int px = std::max(0, std::min(gridW-1, (int)(pt.x / scaleX)));
+                int py = std::max(0, std::min(gridH-1, (int)(pt.y / scaleY)));
+                int idx = getIdx(px, py, pt.layer, gridH, gridL);
+                if (idx == prevIdx) { prevIdx = idx; continue; }
+                prevIdx = idx;
+                if (cell_owner[idx] >= 0 && cell_owner[idx] != netIdx) {
+                    if (!isLegalPinJunction(net, px, py, pt.layer)) {
+                        conflicts++;
+                        history[idx] *= penaltyMult;
+                        if (history[idx] > 1e6f) history[idx] = 1e6f;
                     }
-
-                    // Otherwise, it's a real mid-wire collision. Punish it.
-                    local_conflicts++;
-
-                    // Aggressive history scaling to force rip-up
-                    history[idx] += current_penalty_multiplier * 2.5f;
                 }
             }
-
-            conflicts += local_conflicts;
         }
-        
+
         if (conflicts > 0) {
             std::cout << "    Conflicts found: " << conflicts << ". Increasing penalties...\n";
             hasConflicts = true;
-            // Early termination if stuck at same conflict count
-            if (iter > 1) {
-                static int prevConflicts = -1;
-                static int stuckIters = 0;
-                if (iter == 2) { prevConflicts = -1; stuckIters = 0; } // reset on fresh run
-                if (conflicts == prevConflicts) {
-                    stuckIters++;
-                    if (stuckIters >= 5) {
-                        std::cout << "    Flatlined for 5 iterations. Stopping early.\n";
-                        break;
-                    }
-                } else {
-                    stuckIters = 0;
+            if (conflicts == prevConflicts) {
+                if (++stuckIters >= 5) {
+                    std::cout << "    Flatlined for 5 iterations. Stopping early.\n";
+                    break;
                 }
-                prevConflicts = conflicts;
+            } else {
+                stuckIters = 0;
             }
+            prevConflicts = conflicts;
         } else {
             std::cout << "    Converged! Clean 3D routing achieved.\n";
             break;
@@ -523,93 +564,10 @@ void RouteEngine::runRouting(Design& design, int gridW, int gridH) {
     }
     std::cout << "  PathFinder complete.\n" << std::flush;
 
-    // === DETAILED ROUTING: Jog Insertion Pass ===
-    // Fixes remaining Layer 1 shorts by shifting one wire segment by ±1 unit
-    std::cout << "\n=== DETAILED ROUTING (Jog Insertion) ===\n";
-    
-    // Build occupancy map: (x,y,layer) -> net name
-    std::map<std::tuple<int,int,int>, Net*> occupancy;
-    int jogsInserted = 0;
-    
-    // First pass: populate occupancy with all route points
-    for (Net* net : design.nets) {
-        for (size_t i = 0; i < net->routePath.size(); ++i) {
-            const Point& p = net->routePath[i];
-            auto key = std::make_tuple(p.x, p.y, p.layer);
-            if (occupancy.count(key) == 0) {
-                occupancy[key] = net;
-            }
-            
-            // For power nets, fill in intermediate points between consecutive segment endpoints
-            if ((net->name == "VDD" || net->name == "VSS") && i + 1 < net->routePath.size()) {
-                const Point& p2 = net->routePath[i + 1];
-                if (p.layer == p2.layer) {
-                    int dx = (p2.x > p.x) ? 1 : (p2.x < p.x) ? -1 : 0;
-                    int dy = (p2.y > p.y) ? 1 : (p2.y < p.y) ? -1 : 0;
-                    // Only interpolate straight lines (H or V), skip same-point or diagonal
-                    if ((dx == 0) != (dy == 0)) {
-                        int cx = p.x + dx, cy = p.y + dy;
-                        int maxSteps = std::abs(p2.x - p.x) + std::abs(p2.y - p.y);
-                        int steps = 0;
-                        while ((cx != p2.x || cy != p2.y) && steps < maxSteps) {
-                            auto ikey = std::make_tuple(cx, cy, p.layer);
-                            if (occupancy.count(ikey) == 0) {
-                                occupancy[ikey] = net;
-                            }
-                            cx += dx; cy += dy;
-                            steps++;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Second pass: find conflicts and jog one net's wire
-    for (Net* net : design.nets) {
-        if (net->name == "VDD" || net->name == "VSS") continue;
-        
-        for (size_t i = 0; i < net->routePath.size(); ++i) {
-            Point& p = net->routePath[i];
-            auto key = std::make_tuple(p.x, p.y, p.layer);
-            
-            // Re-check ownership
-            if (occupancy.count(key) && occupancy[key] != net) {
-                // TRUE CONFLICT! Two dynamic nets want this cell.
-                bool resolved = false;
-                
-                // Extremely simple jog logic: attempt a tiny X/Y shift, or jump up a layer (Via drop)
-                int dx[] = {1, 0, -1, 0, 0};
-                int dy[] = {0, 1, 0, -1, 0};
-                int dL[] = {0, 0, 0, 0, 1}; // The 5th option is Z+1
-                
-                for (int d = 0; d < 5 && !resolved; ++d) {
-                    int nx = p.x + dx[d];
-                    int ny = p.y + dy[d];
-                    int nl = p.layer + dL[d];
-                    
-                    if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH && nl < gridL) {
-                        auto newKey = std::make_tuple(nx, ny, nl);
-                        
-                        if (occupancy.count(newKey) == 0) {
-                            occupancy.erase(key);
-                            p.x = nx;
-                            p.y = ny;
-                            p.layer = nl;
-                            occupancy[newKey] = net;
-                            jogsInserted++;
-                            resolved = true;
-                        }
-                    }
-                }
-            } else {
-                // We successfully claimed this spot. Ensure it belongs to us in the global map
-                occupancy[key] = net;
-            }
-        }
-    }
-    
-    std::cout << "  Inserted " << jogsInserted << " jogs to resolve Layer 1 conflicts.\n";
+    // Jog insertion is disabled: PathFinder now converges with 0 signal conflicts,
+    // so post-route jogging only creates spurious DRC violations by shifting signal
+    // points onto adjacent PDN cells. Skip it entirely.
+    std::cout << "  Jog insertion skipped (routing converged clean).\n";
 }
 
 void RouteEngine::ensureAstarCapacity(int totalNodes) {

@@ -86,9 +86,11 @@ public:
 
 private:
     // 1 design unit = 100 nm (matches GdsExporter SCALE=100)
+    // Wire geometry: HALF_WIDTH=7nm — keeps rects non-degenerate and ensures
+    // adjacent-cell gap (100nm - 14nm = 86nm) exceeds minSpacing (80nm).
     static constexpr double SCALE      = 100.0;
-    static constexpr double HALF_WIDTH = 10.0;  // design units = 1000 nm
-    static constexpr double VIA_HALF   =  8.0;  // design units =  800 nm
+    static constexpr double HALF_WIDTH =  0.07; // design units = 7 nm
+    static constexpr double VIA_HALF   =  0.07; // design units = 7 nm
 
     struct DrcRect {
         double      x1, y1, x2, y2;

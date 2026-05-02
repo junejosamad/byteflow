@@ -167,28 +167,43 @@ void PdnGenerator::createMacroRings(Net* vdd, Net* vss) {
             vss->routePath.push_back({(int)vss_x2, (int)vss_y2, 3}); vss->routePath.push_back({(int)vss_x2, (int)vss_y2, 4});
 
             // VDD Outer Ring (offset 4 units)
+            // When the macro is near or touching a core boundary, clamping can
+            // make the VDD outer edge land at the same coordinate as the VSS
+            // inner edge on that side. Both nets at the same x/y → DRC short.
+            // Strategy: skip any VDD ring side whose clamped coordinate equals
+            // the VSS ring coordinate on that same side — the VSS ring already
+            // covers that boundary; emitting VDD on top creates a short.
             double vdd_x1 = std::max(0.0, x1 - 4.0);
             double vdd_y1 = std::max(0.0, y1 - 4.0);
-            double vdd_x2 = std::min(coreWidth, x2 + 4.0);
+            double vdd_x2 = std::min(coreWidth,  x2 + 4.0);
             double vdd_y2 = std::min(coreHeight, y2 + 4.0);
 
-            // Left M3
-            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 3});
-            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 3});
-            // Right M3
-            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 3});
-            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 3});
-            // Bottom M4
-            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 4});
-            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 4});
-            // Top M4
-            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 4});
-            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 4});
-            // Vias at 4 corners
-            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 3}); vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 4});
-            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 3}); vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 4});
-            vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 3}); vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 4});
-            vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 3}); vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 4});
+            bool skipLeft   = ((int)vdd_x1 == (int)vss_x1);
+            bool skipRight  = ((int)vdd_x2 == (int)vss_x2);
+            bool skipBottom = ((int)vdd_y1 == (int)vss_y1);
+            bool skipTop    = ((int)vdd_y2 == (int)vss_y2);
+
+            if (!skipLeft) {
+                vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 3});
+                vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 3});
+            }
+            if (!skipRight) {
+                vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 3});
+                vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 3});
+            }
+            if (!skipBottom) {
+                vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 4});
+                vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 4});
+            }
+            if (!skipTop) {
+                vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 4});
+                vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 4});
+            }
+            // Corner vias: only emit if neither adjacent side is skipped
+            if (!skipLeft  && !skipBottom) { vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 3}); vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y1, 4}); }
+            if (!skipRight && !skipBottom) { vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 3}); vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y1, 4}); }
+            if (!skipLeft  && !skipTop)    { vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 3}); vdd->routePath.push_back({(int)vdd_x1, (int)vdd_y2, 4}); }
+            if (!skipRight && !skipTop)    { vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 3}); vdd->routePath.push_back({(int)vdd_x2, (int)vdd_y2, 4}); }
 
             numMacroRings++;
         }

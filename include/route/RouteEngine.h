@@ -25,6 +25,7 @@ private:
     std::vector<int>       grid_usage;      // per-iteration usage map
     std::vector<AStarNode> astar_pq_buf;   // backing store for priority queue heap
     std::vector<Point>     astar_segment;  // backing store for backtrack path (replaces local segment)
+    std::vector<int>       cell_owner;     // per-cell net-ownership for cross-net conflict detection
     int                    astar_capacity = 0;
 
     void ensureAstarCapacity(int totalNodes);
